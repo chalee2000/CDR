@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+.vite/
+
+# CDR exports contain personal data (phone numbers, IMSI/IMEI, locations).
+# This repository is public, so spreadsheets are blocked everywhere except
+# the fictitious files in samples/.
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+!samples/*.xlsx
+!samples/*.csv
+private-data/

@@ -1,0 +1,69 @@
+name: Test, build and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: dist
+
+  # Deploying fails until Pages is switched on, so check first and leave a
+  # warning instead of a red run: Settings -> Pages -> Source: GitHub Actions.
+  pages-status:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: read
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          type=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>/dev/null || true)
+          if [ "$type" = "workflow" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=GitHub Pages is not set to GitHub Actions::Open Settings -> Pages, choose Source: GitHub Actions, then re-run this workflow (current: ${type:-not enabled})."
+          fi
+
+  deploy:
+    needs: [build, pages-status]
+    if: needs.pages-status.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
