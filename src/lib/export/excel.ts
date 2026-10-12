@@ -10,6 +10,7 @@ import { deviceStats } from '../analysis/devices';
 import { CoordResolver, siteLabelOf, siteStats, stays, type ImportedCoords } from '../analysis/locations';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS } from '../analysis/network';
 import { summarize } from '../analysis/summary';
+import { personName, recordLines, type ProfileMap } from '../profiles';
 
 type Cell = string | number | null;
 type Table = { sheet: string; header: string[]; rows: Cell[][]; widths?: number[] };
@@ -17,9 +18,10 @@ type Table = { sheet: string; header: string[]; rows: Cell[][]; widths?: number[
 const text = (v: string | undefined | null) => v ?? '';
 
 /** Every analysis as plain tables (pure; also used by tests). */
-export function analysisTables(datasets: Dataset[], settings: Settings, imported?: ImportedCoords): Table[] {
+export function analysisTables(datasets: Dataset[], settings: Settings, imported?: ImportedCoords, profiles: ProfileMap = {}): Table[] {
   const resolver = new CoordResolver(imported);
   const tables: Table[] = [];
+  const nameOf = (n: string | undefined) => (n ? text(personName(profiles[n])) : '');
 
   tables.push({
     sheet: 'สรุป',
@@ -32,9 +34,9 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
 
   tables.push({
     sheet: 'คู่ติดต่อ',
-    header: ['เป้าหมาย', 'คู่ติดต่อ', 'ประเภทเลข', 'ประเทศ', 'ค่าดิบในไฟล์', 'รวม', 'โทรออก', 'โทรเข้า', 'ไม่สำเร็จ', 'เวลาสนทนา (วินาที)', 'นานสุด (วินาที)', 'ส่ง SMS', 'รับ SMS', 'จำนวนวัน', 'กลางคืน', 'ครั้งแรก', 'ล่าสุด', 'IMEI คู่สาย', 'เสาของคู่สาย'],
+    header: ['เป้าหมาย', 'คู่ติดต่อ', 'ชื่อ (ข้อมูลบุคคล)', 'ประเภทเลข', 'ประเทศ', 'ค่าดิบในไฟล์', 'รวม', 'โทรออก', 'โทรเข้า', 'ไม่สำเร็จ', 'เวลาสนทนา (วินาที)', 'นานสุด (วินาที)', 'ส่ง SMS', 'รับ SMS', 'จำนวนวัน', 'กลางคืน', 'ครั้งแรก', 'ล่าสุด', 'IMEI คู่สาย', 'เสาของคู่สาย'],
     rows: datasets.flatMap((ds) =>
-      contactStats(ds, settings).map((c) => [ds.target, c.peer, PEER_KIND_TH[c.kind], text(c.country), c.rawValues.join(' | '), c.total, c.callsOut, c.callsIn, c.unanswered, c.talkSec, c.maxTalkSec, c.smsOut, c.smsIn, c.activeDays, c.night, isoText(c.firstTs), isoText(c.lastTs), c.peerImeis.join(', '), c.peerSites.join(', ')]),
+      contactStats(ds, settings).map((c) => [ds.target, c.peer, nameOf(c.peer), PEER_KIND_TH[c.kind], text(c.country), c.rawValues.join(' | '), c.total, c.callsOut, c.callsIn, c.unanswered, c.talkSec, c.maxTalkSec, c.smsOut, c.smsIn, c.activeDays, c.night, isoText(c.firstTs), isoText(c.lastTs), c.peerImeis.join(', '), c.peerSites.join(', ')]),
     ),
   });
 
@@ -97,13 +99,13 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
   const net = buildNetwork(datasets, settings, { ...DEFAULT_NETWORK_OPTIONS, topN: 0 });
   tables.push({
     sheet: 'เครือข่าย_โหนด',
-    header: ['โหนด', 'เป็นเป้าหมาย', 'ประเภท', 'Degree', 'Weighted degree', 'Betweenness (normalized)', 'PageRank', 'Community', 'ติดต่อกับเป้าหมาย'],
-    rows: net.nodes.map((n) => [n.id, n.isTarget ? 'ใช่' : '', n.kind === 'target' ? 'เป้าหมาย' : PEER_KIND_TH[n.kind], n.degree, n.weightedDegree, Math.round(n.betweenness * 10000) / 10000, Math.round(n.pagerank * 10000) / 10000, n.community + 1, n.datasetIds.length]),
+    header: ['โหนด', 'ชื่อ (ข้อมูลบุคคล)', 'เป็นเป้าหมาย', 'ประเภท', 'Degree', 'Weighted degree', 'Betweenness (normalized)', 'PageRank', 'Community', 'ติดต่อกับเป้าหมาย'],
+    rows: net.nodes.map((n) => [n.id, nameOf(n.id), n.isTarget ? 'ใช่' : '', n.kind === 'target' ? 'เป้าหมาย' : PEER_KIND_TH[n.kind], n.degree, n.weightedDegree, Math.round(n.betweenness * 10000) / 10000, Math.round(n.pagerank * 10000) / 10000, n.community + 1, n.datasetIds.length]),
   });
   tables.push({
     sheet: 'เครือข่าย_เส้น',
-    header: ['Source', 'Target', 'รวม', 'โทร', 'SMS', 'เวลาสนทนา (วินาที)'],
-    rows: net.edges.map((e) => [e.source, e.target, e.events, e.calls, e.sms, e.talkSec]),
+    header: ['Source', 'Target', 'รวม', 'Source→Target', 'Target→Source', 'โทร', 'SMS', 'เวลาสนทนา (วินาที)', 'ครั้งแรก', 'ล่าสุด'],
+    rows: net.edges.map((e) => [e.source, e.target, e.events, e.ab, e.ba, e.calls, e.sms, e.talkSec, isoText(e.firstTs), isoText(e.lastTs)]),
   });
 
   tables.push({
@@ -116,6 +118,15 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
       }),
     ),
   });
+
+  const people = Object.values(profiles).sort((a, b) => a.number.localeCompare(b.number));
+  if (people.length) {
+    tables.push({
+      sheet: 'ข้อมูลบุคคล',
+      header: ['เลขหมาย', 'ชื่อ', 'นามสกุล', 'ชื่อเล่น/ฉายา', 'ที่อยู่', 'ประวัติคดีอาญา', 'จำนวนคดี', 'หมายเหตุ', 'มีรูป', 'แก้ไขล่าสุด', 'ที่มา'],
+      rows: people.map((p) => [p.number, text(p.firstName), text(p.lastName), text(p.nickname), text(p.address), recordLines(p).join(' | '), recordLines(p).length, text(p.notes), p.photo ? 'มี' : '', p.updatedAt ? isoText(p.updatedAt) : '', 'ผู้ใช้กรอกเอง (ไม่ได้มาจากไฟล์ CDR)']),
+    });
+  }
 
   tables.push({
     sheet: 'คุณภาพข้อมูล',
@@ -140,8 +151,8 @@ function toSheet(t: Table): Sheet<Blob> {
   };
 }
 
-export async function exportAnalysisXlsx(datasets: Dataset[], settings: Settings, imported?: ImportedCoords): Promise<Blob> {
-  const sheets = analysisTables(datasets, settings, imported).map(toSheet);
+export async function exportAnalysisXlsx(datasets: Dataset[], settings: Settings, imported?: ImportedCoords, profiles: ProfileMap = {}): Promise<Blob> {
+  const sheets = analysisTables(datasets, settings, imported, profiles).map(toSheet);
   return writeXlsxFile(sheets, { fontFamily: 'Tahoma', fontSize: 10 }).toBlob();
 }
 

@@ -1,16 +1,22 @@
 import { useMemo } from 'react';
 import { coLocations, commonContacts, directLinks, relayChains, sharedDevices, type CoLocation, type CommonContact, type DirectLink, type RelayChain, type SharedDevice } from '../lib/analysis/cross';
 import { CoordResolver } from '../lib/analysis/locations';
+import { buildNetwork, DEFAULT_NETWORK_OPTIONS } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { fmtDate, fmtDateTime, fmtDuration, fmtTime, isoText } from '../lib/time';
 import { fmtInt } from '../lib/util';
 import { DataTable, type Column } from '../components/DataTable';
+import { LinkChart } from '../components/LinkChart';
+import { LinkLegend } from '../components/LinkLegend';
 import { Caveat, NumberLink, Section, Swatch } from '../components/bits';
-import { useStore } from '../state/store';
+import { useEffectiveTheme, useStore } from '../state/store';
 
 export function CrossView() {
-  const { datasets, settings, coordImport } = useStore();
+  const { datasets, settings, coordImport, profiles, openPeer } = useStore();
+  const mode = useEffectiveTheme();
   const byId = useMemo(() => new Map(datasets.map((d) => [d.id, d])), [datasets]);
+  // Targets with the contacts they share and their direct links only.
+  const bridges = useMemo(() => buildNetwork(datasets, settings, { ...DEFAULT_NETWORK_OPTIONS, topN: 0, onlyShared: true }), [datasets, settings]);
   const direct = useMemo(() => directLinks(datasets, settings), [datasets, settings]);
   const common = useMemo(() => commonContacts(datasets, settings), [datasets, settings]);
   const relays = useMemo(() => relayChains(datasets, settings), [datasets, settings]);
@@ -106,6 +112,33 @@ export function CrossView() {
 
   return (
     <>
+      <Section title="ผังผู้ติดต่อร่วมและการติดต่อตรงระหว่างเป้าหมาย" sub="เฉพาะเลขหมายที่ติดต่อกับเป้าหมายตั้งแต่ 2 รายขึ้นไป · ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · คลิกเลขหมายเพื่อดูรายละเอียด">
+        {bridges.edges.length > 0 ? (
+          <>
+            <LinkLegend net={bridges} datasets={datasets} mode={mode} profiles={profiles} unit="ครั้ง" />
+            <div className="net-box bridge">
+              <LinkChart
+                network={bridges}
+                mode={mode}
+                profiles={profiles}
+                unit="ครั้ง"
+                yearStyle={y}
+                label={`ผังผู้ติดต่อร่วม ${bridges.nodes.length} เลขหมาย`}
+                height={440}
+                allLabels
+                allEdgeLabels
+                onSelect={(sel) => {
+                  if (sel?.type === 'node') openPeer(sel.id);
+                }}
+              />
+            </div>
+          </>
+        ) : (
+          <p className="caveat" style={{ margin: 0 }}>
+            ไม่พบผู้ติดต่อร่วมหรือการติดต่อกันโดยตรงระหว่างเป้าหมาย
+          </p>
+        )}
+      </Section>
       <Section title="การติดต่อกันโดยตรงระหว่างเป้าหมาย" sub="นับจากไฟล์ของแต่ละฝ่าย (การติดต่อเดียวกันอาจปรากฏในทั้งสองไฟล์)">
         <DataTable label="การติดต่อกันโดยตรง" rows={direct} columns={directCols} initialSort={{ key: 'n', dir: 'desc' }} empty="ไม่พบการติดต่อกันโดยตรงระหว่างเป้าหมาย" csvName="direct-links" />
       </Section>

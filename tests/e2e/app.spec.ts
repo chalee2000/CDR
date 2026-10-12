@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -73,6 +73,78 @@ test('sample data: every tab renders without errors', async ({ page }) => {
   expect(scrollW).toBeLessThanOrEqual(390);
   await shot(page, 'mobile-overview');
 
+  expect(errors).toEqual([]);
+});
+
+test('link chart: search, details and a person profile saved to and opened from a file', async ({ page }, testInfo) => {
+  const errors = watchErrors(page);
+  await page.goto(APP);
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  await openTab(page, 'ผังเครือข่าย');
+  const toolbar = page.getByRole('toolbar', { name: 'เครื่องมือผัง' });
+  await expect(toolbar).toBeVisible();
+
+  await page.getByLabel('ค้นหาเลขหมายหรือชื่อในผัง').fill('0860000111');
+  await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'รายละเอียดเลขหมาย' });
+  await expect(panel).toContainText('ผู้ติดต่อร่วม 2 เป้าหมาย');
+
+  // A made-up picture drawn in the browser (no real person).
+  const painter = await page.context().newPage();
+  await painter.setContent('<div id="a" style="width:240px;height:240px;background:linear-gradient(135deg,#6aa0d8,#2a4f7a)"></div>');
+  const picture = await painter.locator('#a').screenshot();
+  await painter.close();
+
+  await panel.getByRole('button', { name: 'เพิ่มชื่อ ที่อยู่ ประวัติคดี และรูป' }).click();
+  const dialog = page.getByRole('dialog', { name: /ข้อมูลบุคคลของเลข/ });
+  await dialog.getByLabel('ชื่อ (รวมคำนำหน้า)').fill('นายทดสอบ');
+  await dialog.getByLabel('นามสกุล').fill('ตัวอย่าง');
+  await dialog.getByLabel('ที่อยู่').fill('ที่อยู่สมมติ');
+  await dialog.getByLabel('ประวัติคดีอาญา (บรรทัดละ 1 คดี)').fill('คดีสมมติ');
+  await page.getByTestId('photo-input').setInputFiles({ name: 'picture.png', mimeType: 'image/png', buffer: picture });
+  await expect(dialog.locator('img.person-photo')).toBeVisible();
+  await dialog.getByRole('button', { name: 'บันทึก', exact: true }).click();
+  await expect(panel).toContainText('นายทดสอบ ตัวอย่าง');
+  await expect(panel).toContainText('ประวัติคดีอาญา 1 รายการ');
+  await expect(page.getByRole('table', { name: 'ตัวชี้วัดเครือข่าย' })).toContainText('นายทดสอบ ตัวอย่าง');
+  await shot(page, '10-link-profile');
+
+  // The chart (with the photo drawn in it) still exports as an image.
+  const image = page.waitForEvent('download');
+  await toolbar.getByRole('button', { name: 'บันทึกภาพ PNG' }).click();
+  expect((await image).suggestedFilename()).toBe('cdr-network.png');
+
+  const sidebar = page.getByRole('complementary', { name: 'ไฟล์และการตั้งค่า' });
+  await expect(sidebar).toContainText('ยังไม่ได้บันทึก');
+  const saved = page.waitForEvent('download');
+  await sidebar.getByRole('button', { name: 'บันทึกเป็นไฟล์' }).click();
+  const file = await saved;
+  expect(file.suggestedFilename()).toMatch(/^CDR-profiles_\d{8}-\d{4}\.json$/);
+  const path = testInfo.outputPath('profiles.json');
+  await file.saveAs(path);
+  const json = JSON.parse(readFileSync(path, 'utf8'));
+  expect(json.profiles.map((p: { number: string }) => p.number)).toEqual(['0860000111']);
+  expect(json.profiles[0].photo).toMatch(/^data:image\/jpeg;base64,/);
+  await expect(sidebar).not.toContainText('ยังไม่ได้บันทึก');
+
+  // Nothing is kept by the browser: a new page starts empty until the file is opened.
+  await page.reload();
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  await expect(sidebar).not.toContainText('ข้อมูลบุคคล (1)');
+  await page.getByTestId('profiles-input').setInputFiles(path);
+  await expect(sidebar).toContainText('ข้อมูลบุคคล (1)');
+
+  await openTab(page, 'คู่ติดต่อ');
+  const contacts = page.getByRole('table', { name: 'ตารางคู่ติดต่อ' });
+  await expect(contacts).toContainText('นายทดสอบ ตัวอย่าง');
+  await contacts.getByRole('button', { name: '0860000111' }).first().click();
+  const drawer = page.getByRole('dialog', { name: /0860000111/ });
+  await expect(drawer.getByRole('img', { name: 'ผังความเชื่อมโยงของ 0860000111' })).toBeVisible();
+  await expect(drawer).toContainText('คดีสมมติ');
+  await page.keyboard.press('Escape');
+
+  await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');
+  await expect(page.getByRole('img', { name: /^ผังผู้ติดต่อร่วม/ })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

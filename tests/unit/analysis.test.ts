@@ -8,7 +8,7 @@ import { contactStats } from '../../src/lib/analysis/contacts';
 import { coLocations, commonContacts, directLinks, relayChains, sharedDevices } from '../../src/lib/analysis/cross';
 import { deviceStats } from '../../src/lib/analysis/devices';
 import { CoordResolver, homeWorkCandidates, siteStats, stays } from '../../src/lib/analysis/locations';
-import { buildNetwork, DEFAULT_NETWORK_OPTIONS } from '../../src/lib/analysis/network';
+import { buildNetwork, DEFAULT_NETWORK_OPTIONS, egoNetwork } from '../../src/lib/analysis/network';
 import { summarize } from '../../src/lib/analysis/summary';
 import { bursts, dailySeries, hourProfile, silences } from '../../src/lib/analysis/temporal';
 import { analysisTables, exportAnalysisXlsx } from '../../src/lib/export/excel';
@@ -131,6 +131,34 @@ describe('cross-target analysis', () => {
     const onlyShared = buildNetwork(datasets, settings, { ...DEFAULT_NETWORK_OPTIONS, onlyShared: true });
     expect(onlyShared.nodes.filter((n) => !n.isTarget).map((n) => n.id).sort()).toEqual(['0860000111', '0950000222']);
   });
+
+  it('keeps call direction on every link, once per call between two targets', () => {
+    const net = buildNetwork(datasets, settings, { ...DEFAULT_NETWORK_OPTIONS, topN: 0 });
+    for (const e of net.edges) {
+      expect(e.ab + e.ba).toBeLessThanOrEqual(e.events);
+      expect(e.firstTs).toBeLessThanOrEqual(e.lastTs);
+    }
+    // B's file and C's file both hold the 8 B-C calls; each direction counts once.
+    const bc = net.edges.find((e) => [e.source, e.target].sort().join() === [SAMPLE_TARGETS.B, SAMPLE_TARGETS.C].sort().join())!;
+    const bCalls = B.interactions.filter((i) => i.peer === SAMPLE_TARGETS.C && i.service === 'call');
+    const fromB = bc.source === SAMPLE_TARGETS.B ? bc.ab : bc.ba;
+    const toB = bc.source === SAMPLE_TARGETS.B ? bc.ba : bc.ab;
+    expect(fromB).toBe(bCalls.filter((i) => i.direction === 'out').length);
+    expect(toB).toBe(bCalls.filter((i) => i.direction === 'in').length);
+    expect(fromB + toB).toBe(8);
+    // A's outgoing and incoming contacts with X1 match its contact stats.
+    const x1 = contactStats(A, settings).find((c) => c.peer === '0860000111')!;
+    const ax = net.edges.find((e) => [e.source, e.target].sort().join() === [SAMPLE_TARGETS.A, '0860000111'].sort().join())!;
+    const fromA = ax.source === SAMPLE_TARGETS.A ? ax.ab : ax.ba;
+    expect(fromA).toBe(x1.callsOut + x1.smsOut);
+  });
+
+  it('cuts out the neighbourhood of one number', () => {
+    const net = buildNetwork(datasets, settings, DEFAULT_NETWORK_OPTIONS);
+    const ego = egoNetwork(net, '0860000111');
+    expect(ego.nodes.map((n) => n.id).sort()).toEqual(['0860000111', SAMPLE_TARGETS.A, SAMPLE_TARGETS.B].sort());
+    expect(ego.edges.every((e) => ego.nodes.some((n) => n.id === e.source) && ego.nodes.some((n) => n.id === e.target))).toBe(true);
+  });
 });
 
 describe('exports', () => {
@@ -142,6 +170,18 @@ describe('exports', () => {
     const sheets = await readXlsxFile(await blob.arrayBuffer());
     expect(sheets.map((s) => s.sheet)).toContain('สรุป');
     expect(sheets.find((s) => s.sheet === 'สรุป')!.data).toHaveLength(4);
+  });
+
+  it('adds the person details typed in by the user (and no sheet when there are none)', () => {
+    const profiles = { '0860000111': { number: '0860000111', firstName: 'นายทดสอบ', lastName: 'ตัวอย่าง', criminalRecord: 'คดีสมมติ 1\nคดีสมมติ 2', updatedAt: Date.UTC(2026, 9, 1) } };
+    const tables = analysisTables(datasets, settings, undefined, profiles);
+    for (const t of tables) for (const r of t.rows) expect(r).toHaveLength(t.header.length);
+    const people = tables.find((t) => t.sheet === 'ข้อมูลบุคคล')!;
+    expect(people.rows).toHaveLength(1);
+    expect(people.rows[0][people.header.indexOf('จำนวนคดี')]).toBe(2);
+    const contacts = tables.find((t) => t.sheet === 'คู่ติดต่อ')!;
+    expect(contacts.rows.some((r) => r[1] === '0860000111' && r[2] === 'นายทดสอบ ตัวอย่าง')).toBe(true);
+    expect(analysisTables(datasets, settings).some((t) => t.sheet === 'ข้อมูลบุคคล')).toBe(false);
   });
 
   it('writes CSV with BOM, quoting and formula neutralising', () => {

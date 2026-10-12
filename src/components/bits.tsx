@@ -2,19 +2,26 @@ import type { ReactNode } from 'react';
 import { datasetName } from '../lib/dataset';
 import { PEER_KIND_TH } from '../lib/labels';
 import { slotColor } from '../lib/palette';
+import { personName } from '../lib/profiles';
 import type { Dataset, PeerKind } from '../lib/types';
 import { useEffectiveTheme, useStore } from '../state/store';
 
-/** A party number that opens the contact drawer. */
-export function NumberLink({ peer, kind, country }: { peer?: string; kind?: PeerKind; country?: string }) {
-  const { openPeer, datasets } = useStore();
+/** A party number that opens the contact drawer (with the person's name when known). */
+export function NumberLink({ peer, kind, country, showName = true }: { peer?: string; kind?: PeerKind; country?: string; showName?: boolean }) {
+  const { openPeer, datasets, profiles } = useStore();
   if (!peer) return <span>-</span>;
   const isTarget = datasets.some((d) => d.target === peer);
+  const name = showName ? personName(profiles[peer]) : undefined;
   return (
     <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
       <button className="link-btn mono" type="button" onClick={() => openPeer(peer)} title="ดูรายละเอียดการติดต่อ">
         {peer}
       </button>
+      {name && (
+        <span className="person-tag" title="ข้อมูลบุคคลที่ผู้ใช้กรอก">
+          {name}
+        </span>
+      )}
       {isTarget && <span className="badge accent">เป้าหมาย</span>}
       {kind && kind !== 'mobile' && (
         <span className="badge" title={PEER_KIND_TH[kind]}>

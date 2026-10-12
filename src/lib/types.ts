@@ -13,7 +13,7 @@ export type FormatId = 'ais' | 'dtac' | 'flat';
 export type CoordSource = 'file' | 'import' | 'approx';
 
 export interface Cell {
-  /** Stable key within a dataset, e.g. "ECI:150900141" or "CELL:SIM0001E_1NB01_S01". */
+  /** Stable key within a dataset, e.g. "ECI:150900141" or "CELL:SIM0001E_1NB01_S01" (fictitious examples). */
   key: string;
   cellId?: string;
   lac?: string;

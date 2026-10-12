@@ -5,8 +5,11 @@ import { normHeader } from '../lib/parsers/table';
 import { summarize } from '../lib/analysis/summary';
 import { fmtDate } from '../lib/time';
 import type { ImportedCoords } from '../lib/analysis/locations';
+import { parseProfilesFile, personName, profilesFileName, serializeProfiles } from '../lib/profiles';
 import { useStore } from '../state/store';
 import { Swatch } from './bits';
+import { downloadBlob } from './download';
+import { reencodePhoto } from './photo';
 
 export function ImportPanel() {
   const { addFiles, loadSamples, busy } = useStore();
@@ -55,7 +58,7 @@ export function ImportPanel() {
 }
 
 export function DatasetList() {
-  const { datasets, selectedId, select, removeDataset, setLabel, clearAll, settings } = useStore();
+  const { datasets, selectedId, select, removeDataset, setLabel, clearAll, settings, profiles, openProfileEditor } = useStore();
   const [editing, setEditing] = useState<string>();
   const summaries = useMemo(() => new Map(datasets.map((d) => [d.id, summarize(d, settings)])), [datasets, settings]);
   if (datasets.length === 0) return null;
@@ -96,6 +99,7 @@ export function DatasetList() {
                 ) : (
                   d.label !== d.target && <div style={{ fontSize: 13.5 }}>{d.label}</div>
                 )}
+                {personName(profiles[d.target]) && <div className="person-tag">{personName(profiles[d.target])}</div>}
                 <div className="meta">
                   {d.meta.operator ?? d.meta.formatLabel} · {s.records.toLocaleString('th-TH')} รายการ
                 </div>
@@ -122,6 +126,18 @@ export function DatasetList() {
                 <button
                   className="icon-btn"
                   type="button"
+                  title="ข้อมูลบุคคล (ชื่อ ที่อยู่ ประวัติคดี รูป)"
+                  aria-label={`ข้อมูลบุคคลของ ${d.target}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openProfileEditor(d.target);
+                  }}
+                >
+                  👤
+                </button>
+                <button
+                  className="icon-btn"
+                  type="button"
                   title="นำออก"
                   aria-label={`นำ ${d.target} ออก`}
                   onClick={(e) => {
@@ -136,6 +152,79 @@ export function DatasetList() {
           );
         })}
       </ul>
+    </section>
+  );
+}
+
+/** Person details: kept in page memory, saved to and opened from a file. */
+export function ProfilePanel() {
+  const { profiles, profilesDirty, loadProfiles, clearProfiles, markProfilesSaved, notify } = useStore();
+  const input = useRef<HTMLInputElement>(null);
+  const [opening, setOpening] = useState(false);
+  const count = Object.keys(profiles).length;
+
+  const save = () => {
+    downloadBlob(new Blob([serializeProfiles(profiles)], { type: 'application/json' }), profilesFileName());
+    markProfilesSaved();
+  };
+  const open = async (f: File) => {
+    setOpening(true);
+    try {
+      const { profiles: list, skipped } = parseProfilesFile(await f.text());
+      // Photos from a file are decoded and re-encoded before use.
+      const clean = await Promise.all(list.map(async (p) => (p.photo ? { ...p, photo: await reencodePhoto(p.photo) } : p)));
+      const { added, replaced } = loadProfiles(clean);
+      notify('info', `เปิด ${f.name}: เพิ่ม ${added} รายการ${replaced ? ` แทนที่ ${replaced} รายการ` : ''}${skipped ? ` (ข้ามรายการที่ใช้ไม่ได้ ${skipped})` : ''}`);
+    } catch (e) {
+      notify('error', `${f.name}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  return (
+    <section className="side-section">
+      <h2 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+        <span>ข้อมูลบุคคล{count > 0 ? ` (${count})` : ''}</span>
+        {profilesDirty && <span className="badge warn">ยังไม่ได้บันทึก</span>}
+      </h2>
+      <p className="meta" style={{ margin: '0 0 6px' }}>
+        {count > 0 ? `มีชื่อ/ที่อยู่/ประวัติ/รูป ของ ${count} เลขหมาย` : 'คลิกเลขหมายในผังเครือข่ายหรือรายการติดต่อเพื่อเพิ่มชื่อ ที่อยู่ ประวัติคดี และรูป'}
+      </p>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button className="btn small" type="button" onClick={() => input.current?.click()} disabled={opening}>
+          {opening ? 'กำลังเปิด…' : 'เปิดไฟล์ข้อมูลบุคคล'}
+        </button>
+        <button className={`btn small${profilesDirty ? ' primary' : ''}`} type="button" onClick={save} disabled={count === 0}>
+          บันทึกเป็นไฟล์
+        </button>
+        {count > 0 && (
+          <button
+            className="btn small ghost danger"
+            type="button"
+            onClick={() => {
+              if (!profilesDirty || window.confirm('ข้อมูลบุคคลที่ยังไม่ได้บันทึกเป็นไฟล์จะหายไป ต้องการล้างหรือไม่')) clearProfiles();
+            }}
+          >
+            ล้าง
+          </button>
+        )}
+      </div>
+      <p className="caveat" style={{ margin: '6px 0 0' }}>
+        ข้อมูลอยู่ในหน้านี้เท่านั้น ปิดหน้าแล้วหาย · ไฟล์ที่บันทึกมีข้อมูลส่วนบุคคล ให้เก็บรักษาตามระเบียบของหน่วยงาน
+      </p>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        data-testid="profiles-input"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void open(f);
+        }}
+      />
     </section>
   );
 }

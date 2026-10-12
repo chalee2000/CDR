@@ -1,22 +1,37 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { contactStats, interactionsWith } from '../lib/analysis/contacts';
 import { siteLabelOf } from '../lib/analysis/locations';
+import { buildNetwork, DEFAULT_NETWORK_OPTIONS, egoNetwork } from '../lib/analysis/network';
 import { datasetName } from '../lib/dataset';
 import { interactionLabel, PEER_KIND_TH } from '../lib/labels';
 import { normalizeNumber } from '../lib/phone';
+import { personName } from '../lib/profiles';
 import { fmtDateTime, fmtDuration, isoText } from '../lib/time';
 import type { Dataset, Interaction } from '../lib/types';
 import { fmtInt } from '../lib/util';
 import { ChartCard, EChart } from './Chart';
 import { singleHourOption } from './charts';
 import { DataTable, type Column } from './DataTable';
+import { LinkChart } from './LinkChart';
+import { PersonCard } from './PersonCard';
 import { Caveat, Section, Swatch } from './bits';
 import { useEffectiveTheme, useStore } from '../state/store';
 
 export function ContactDrawer() {
-  const { drawerPeer: peer, openPeer, datasets, settings } = useStore();
+  const { drawerPeer: peer, openPeer, datasets, settings, profiles, openProfileEditor } = useStore();
   const mode = useEffectiveTheme();
   const close = useRef<HTMLButtonElement>(null);
+
+  // Who this number is linked to: the number, the targets it talked to and
+  // the links between those targets. For a target, only its bridges to the
+  // other targets (its own contacts would crowd a small chart).
+  const ego = useMemo(() => {
+    if (!peer) return undefined;
+    const isTarget = datasets.some((d) => d.target === peer);
+    const net = buildNetwork(datasets, { ...settings, includeServiceNumbers: true }, { ...DEFAULT_NETWORK_OPTIONS, topN: 0, onlyShared: isTarget });
+    const e = egoNetwork(net, peer);
+    return e.nodes.length > 1 ? e : undefined;
+  }, [peer, datasets, settings]);
 
   useEffect(() => {
     if (!peer) return;
@@ -45,6 +60,7 @@ export function ContactDrawer() {
   const peerImeis = [...new Set(per.flatMap((p) => p.c!.peerImeis))];
   const peerSites = [...new Set(per.flatMap((p) => p.c!.peerSites))];
   const y = settings.yearStyle;
+  const name = personName(profiles[peer]);
 
   const cols: Column<{ ds: Dataset; it: Interaction }>[] = [
     { key: 'ts', header: 'วันเวลา', render: (e) => <span className="nowrap mono">{fmtDateTime(e.it.ts, y)}</span>, sortValue: (e) => e.it.ts, csv: (e) => isoText(e.it.ts) },
@@ -72,7 +88,8 @@ export function ContactDrawer() {
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
         <header>
           <div>
-            <h2 id="drawer-title" className="mono" style={{ fontSize: 20 }}>
+            {name && <div className="person-name-lg">{name}</div>}
+            <h2 id="drawer-title" className="mono" style={{ fontSize: name ? 16 : 20 }}>
               {peer}
             </h2>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
@@ -87,6 +104,30 @@ export function ContactDrawer() {
             ปิด ✕
           </button>
         </header>
+        <Section title="ข้อมูลบุคคล" sub="ผู้ใช้กรอกเอง ไม่ได้มาจากไฟล์ CDR">
+          <PersonCard number={peer} profile={profiles[peer]} onEdit={() => openProfileEditor(peer)} />
+        </Section>
+        {ego && (
+          <Section title="ผังความเชื่อมโยงของเลขนี้" sub="ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · ลูกศรชี้จากฝั่งที่โทรหรือส่ง">
+            <div className="net-box mini">
+              <LinkChart
+                network={ego}
+                mode={mode}
+                profiles={profiles}
+                unit="ครั้ง"
+                yearStyle={y}
+                label={`ผังความเชื่อมโยงของ ${peer}`}
+                height={280}
+                compact
+                allLabels
+                allEdgeLabels
+                onSelect={(sel) => {
+                  if (sel?.type === 'node' && sel.id !== peer) openPeer(sel.id);
+                }}
+              />
+            </div>
+          </Section>
+        )}
         <Section title="สรุปแยกตามเป้าหมาย">
           <div className="table-wrap">
             <table className="data" aria-label="สรุปการติดต่อแยกตามเป้าหมาย">

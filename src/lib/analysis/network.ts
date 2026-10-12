@@ -44,6 +44,12 @@ export interface NetEdge {
   sms: number;
   talkSec: number;
   weight: number;
+  /** Calls/SMS made by source to target (caller or sender first). */
+  ab: number;
+  /** Calls/SMS made by target to source. */
+  ba: number;
+  firstTs: number;
+  lastTs: number;
 }
 
 export interface Network {
@@ -91,7 +97,7 @@ export function buildNetwork(datasets: Dataset[], settings: Settings, options: N
       if (!byDs) perDataset.set(key, (byDs = new Map()));
       let e = byDs.get(ds.id);
       if (!e) {
-        e = { source: a, target: b, events: 0, calls: 0, sms: 0, talkSec: 0, weight: 0 };
+        e = { source: a, target: b, events: 0, calls: 0, sms: 0, talkSec: 0, weight: 0, ab: 0, ba: 0, firstTs: it.ts, lastTs: it.ts };
         byDs.set(ds.id, e);
       }
       e.events++;
@@ -99,18 +105,31 @@ export function buildNetwork(datasets: Dataset[], settings: Settings, options: N
         e.calls++;
         if (it.answered) e.talkSec += it.durationSec ?? 0;
       } else e.sms++;
+      // Forwarded or undirected records count as contact but give no direction.
+      const from = it.direction === 'out' ? ds.target : it.direction === 'in' ? it.peer : undefined;
+      if (from === a) e.ab++;
+      else if (from === b) e.ba++;
+      if (it.ts < e.firstTs) e.firstTs = it.ts;
+      if (it.ts > e.lastTs) e.lastTs = it.ts;
     }
   }
   const edges = new Map<string, NetEdge>();
   for (const [key, byDs] of perDataset) {
     const sides = [...byDs.values()];
     const e = { ...sides[0] };
+    // Both files hold the same communications: A's outgoing calls to B are
+    // B's incoming calls from A, so each direction takes the larger side.
     for (const s of sides.slice(1)) {
       e.events = Math.max(e.events, s.events);
       e.calls = Math.max(e.calls, s.calls);
       e.sms = Math.max(e.sms, s.sms);
       e.talkSec = Math.max(e.talkSec, s.talkSec);
+      e.ab = Math.max(e.ab, s.ab);
+      e.ba = Math.max(e.ba, s.ba);
+      e.firstTs = Math.min(e.firstTs, s.firstTs);
+      e.lastTs = Math.max(e.lastTs, s.lastTs);
     }
+    e.events = Math.max(e.events, e.ab + e.ba);
     edges.set(key, e);
   }
 
@@ -196,4 +215,21 @@ export function buildNetwork(datasets: Dataset[], settings: Settings, options: N
   });
   nodes.sort((a, b) => Number(b.isTarget) - Number(a.isTarget) || b.weightedDegree - a.weightedDegree);
   return { nodes, edges: kept, communities: count, modularity };
+}
+
+/**
+ * The part of a network around one number: the number, its direct neighbours
+ * and the links among them. Node metrics keep their whole-network values.
+ */
+export function egoNetwork(net: Network, id: string): Network {
+  const keep = new Set([id]);
+  for (const e of net.edges) {
+    if (e.source === id) keep.add(e.target);
+    else if (e.target === id) keep.add(e.source);
+  }
+  return {
+    ...net,
+    nodes: net.nodes.filter((n) => keep.has(n.id)),
+    edges: net.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+  };
 }

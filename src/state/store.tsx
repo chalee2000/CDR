@@ -4,6 +4,7 @@ import { readWorkbook } from '../lib/io/readWorkbook';
 import { parseWorkbook, type SheetSuggestion } from '../lib/parsers';
 import { generateSamples } from '../lib/samples/generate';
 import type { ImportedCoords } from '../lib/analysis/locations';
+import { hasContent, mergeProfiles, type PersonProfile, type ProfileMap } from '../lib/profiles';
 import { DEFAULT_SETTINGS, type ColumnMapping, type Dataset, type RawWorkbook, type Settings } from '../lib/types';
 
 export type ThemeChoice = 'system' | 'light' | 'dark';
@@ -49,6 +50,18 @@ interface Store {
   openPeer: (peer: string | undefined) => void;
   coordImport?: CoordImport;
   setCoordImport: (c: CoordImport | undefined) => void;
+  notify: (kind: 'error' | 'info', text: string) => void;
+  /** Person details typed in by the user — page memory only, never browser storage. */
+  profiles: ProfileMap;
+  saveProfile: (p: PersonProfile) => void;
+  removeProfile: (number: string) => void;
+  loadProfiles: (list: PersonProfile[]) => { added: number; replaced: number };
+  clearProfiles: () => void;
+  /** Profiles changed since they were last saved to (or opened from) a file. */
+  profilesDirty: boolean;
+  markProfilesSaved: () => void;
+  profileEditor?: string;
+  openProfileEditor: (number: string | undefined) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -95,10 +108,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [queue, setQueue] = useState<MappingRequest[]>([]);
   const [drawerPeer, setDrawerPeer] = useState<string>();
   const [coordImport, setCoordImport] = useState<CoordImport>();
+  const [profiles, setProfiles] = useState<ProfileMap>({});
+  const [profilesDirty, setProfilesDirty] = useState(false);
+  const [profileEditor, setProfileEditor] = useState<string>();
 
   const notify = useCallback((kind: 'error' | 'info', text: string) => {
     setMessages((m) => [...m, { id: ++msgSeq, kind, text }]);
   }, []);
+
+  // Unsaved person details would be lost with the page: let the browser ask.
+  useEffect(() => {
+    if (!profilesDirty) return;
+    const onLeave = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onLeave);
+    return () => window.removeEventListener('beforeunload', onLeave);
+  }, [profilesDirty]);
+
+  const saveProfile = useCallback((p: PersonProfile) => {
+    setProfiles((cur) => {
+      const next = { ...cur };
+      if (hasContent(p)) next[p.number] = { ...p, updatedAt: Date.now() };
+      else delete next[p.number];
+      return next;
+    });
+    setProfilesDirty(true);
+  }, []);
+
+  const removeProfile = useCallback((number: string) => {
+    setProfiles((cur) => {
+      if (!cur[number]) return cur;
+      const next = { ...cur };
+      delete next[number];
+      return next;
+    });
+    setProfilesDirty(true);
+  }, []);
+
+  const loadProfiles = useCallback(
+    (list: PersonProfile[]) => {
+      const { next, added, replaced } = mergeProfiles(profiles, list);
+      setProfiles(next);
+      // Opening a file onto an empty set leaves nothing new to save.
+      setProfilesDirty(Object.keys(profiles).length > 0 && (added > 0 || replaced > 0) ? true : profilesDirty);
+      return { added, replaced };
+    },
+    [profiles, profilesDirty],
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -251,6 +309,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     openPeer: setDrawerPeer,
     coordImport,
     setCoordImport,
+    notify,
+    profiles,
+    saveProfile,
+    removeProfile,
+    loadProfiles,
+    clearProfiles: () => {
+      setProfiles({});
+      setProfilesDirty(false);
+    },
+    profilesDirty,
+    markProfilesSaved: () => setProfilesDirty(false),
+    profileEditor,
+    openProfileEditor: setProfileEditor,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

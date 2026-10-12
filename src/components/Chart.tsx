@@ -11,23 +11,38 @@ echarts.use([BarChart, LineChart, HeatmapChart, GraphChart, GridComponent, Toolt
 
 interface Props {
   option: EChartsCoreOption;
-  height: number;
+  height: number | string;
   label: string;
   onClick?: (params: { name?: string; data?: unknown; dataType?: string }) => void;
+  /** Click on empty canvas (no chart element under the pointer). */
+  onBlankClick?: () => void;
   onReady?: (chart: ECharts) => void;
+  /**
+   * Merge option updates into the chart instead of replacing it, so the
+   * user's zoom/pan (and force-layout positions) survive style changes. A new
+   * `resetKey` still forces a full replace.
+   */
+  merge?: boolean;
+  resetKey?: unknown;
 }
 
-export function EChart({ option, height, label, onClick, onReady }: Props) {
+export function EChart({ option, height, label, onClick, onBlankClick, onReady, merge, resetKey }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<ECharts>(null);
   const click = useRef(onClick);
   click.current = onClick;
+  const blank = useRef(onBlankClick);
+  blank.current = onBlankClick;
+  const lastReset = useRef<unknown>(undefined);
 
   useEffect(() => {
     if (!el.current) return;
     const c = echarts.init(el.current, undefined, { renderer: 'canvas' });
     chart.current = c;
     c.on('click', (p) => click.current?.(p as never));
+    c.getZr().on('click', (e) => {
+      if (!e.target) blank.current?.();
+    });
     const ro = new ResizeObserver(() => c.resize());
     ro.observe(el.current);
     onReady?.(c);
@@ -35,13 +50,18 @@ export function EChart({ option, height, label, onClick, onReady }: Props) {
       ro.disconnect();
       c.dispose();
       chart.current = null;
+      lastReset.current = undefined;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    chart.current?.setOption(option, { notMerge: true });
-  }, [option]);
+    const c = chart.current;
+    if (!c) return;
+    const replace = !merge || lastReset.current !== resetKey;
+    lastReset.current = resetKey;
+    c.setOption(option, { notMerge: replace });
+  }, [option, merge, resetKey]);
 
   return <div ref={el} className="chart-box" style={{ height }} role="img" aria-label={label} />;
 }

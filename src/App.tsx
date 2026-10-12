@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { exportAnalysisXlsx, exportFileName } from './lib/export/excel';
 import { ContactDrawer } from './components/ContactDrawer';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ColumnMappingDialog, Toasts } from './components/Dialogs';
-import { DatasetList, ImportPanel, SettingsPanel } from './components/Sidebar';
+import { ProfileDialog } from './components/ProfileDialog';
+import { DatasetList, ImportPanel, ProfilePanel, SettingsPanel } from './components/Sidebar';
 import { downloadBlob } from './components/download';
 import { ContactsView } from './views/ContactsView';
 import { CrossView } from './views/CrossView';
@@ -54,7 +56,8 @@ function Welcome() {
           <strong>พื้นที่และอุปกรณ์</strong>เสาที่ใช้บ่อย พื้นที่ที่อาจเป็นที่พัก/ที่ทำงาน เส้นทางรายวันบนแผนที่ การเปลี่ยนเครื่อง และเครื่อง 2 ซิม
         </li>
         <li>
-          <strong>เชื่อมโยงหลายเป้าหมาย</strong>ผู้ติดต่อร่วม การติดต่อกันโดยตรง ลำดับการติดต่อทอด อุปกรณ์ร่วม การอยู่พื้นที่เดียวกัน และผังเครือข่ายพร้อม Centrality/Community
+          <strong>เชื่อมโยงหลายเป้าหมาย</strong>ผังเชื่อมโยงแบบผังสืบสวน (ใครโทรหาใคร กี่ครั้ง) ใส่ชื่อ ที่อยู่ ประวัติคดี และรูปบุคคลได้ ผู้ติดต่อร่วม ลำดับการติดต่อทอด อุปกรณ์ร่วม
+          การอยู่พื้นที่เดียวกัน และ Centrality/Community
         </li>
         <li>
           <strong>ส่งออก</strong>Excel หลายชีตสำหรับทำรายงาน, CSV ของทุกตาราง, ภาพผังเครือข่าย และพิมพ์/บันทึกเป็น PDF
@@ -91,7 +94,7 @@ function ThemeSwitch() {
 }
 
 export function App() {
-  const { datasets, settings, coordImport } = useStore();
+  const { datasets, settings, coordImport, profiles } = useStore();
   const [tab, setTab] = useState<TabId>('overview');
   const [exporting, setExporting] = useState(false);
   const active = TABS.find((t) => t.id === tab)!;
@@ -99,7 +102,7 @@ export function App() {
   const exportXlsx = async () => {
     setExporting(true);
     try {
-      const blob = await exportAnalysisXlsx(datasets, settings, coordImport?.coords);
+      const blob = await exportAnalysisXlsx(datasets, settings, coordImport?.coords, profiles);
       downloadBlob(blob, exportFileName(datasets));
     } finally {
       setExporting(false);
@@ -145,6 +148,7 @@ export function App() {
         <aside className="sidebar" aria-label="ไฟล์และการตั้งค่า">
           <ImportPanel />
           <DatasetList />
+          <ProfilePanel />
           <SettingsPanel />
         </aside>
         <main className="main">
@@ -160,14 +164,21 @@ export function App() {
                 ))}
               </nav>
               <div role="tabpanel" id={`panel-${active.id}`} aria-labelledby={`tab-${active.id}`} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <active.View />
+                <ErrorBoundary resetKey={tab} label={`แท็บ "${active.label}"`}>
+                  <active.View />
+                </ErrorBoundary>
               </div>
             </>
           )}
         </main>
       </div>
       <ColumnMappingDialog />
-      <ContactDrawer />
+      <ErrorBoundary label="หน้าต่างรายละเอียดคู่ติดต่อ">
+        <ContactDrawer />
+      </ErrorBoundary>
+      <ErrorBoundary label="หน้าต่างข้อมูลบุคคล">
+        <ProfileDialog />
+      </ErrorBoundary>
       <Toasts />
     </div>
   );
