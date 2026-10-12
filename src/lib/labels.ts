@@ -59,6 +59,7 @@ export const SOURCE_TH: Record<Interaction['source'], string> = {
   FLAT: 'ตารางหลัก',
   VOICE: 'VOICE',
   IMS: 'IMS (VoLTE)',
+  'VOICE+IMS': 'VOICE + IMS (สายเดียวกัน)',
   SMS: 'SMS',
   DATA: 'DATA',
   WIFI: 'Wi-Fi',

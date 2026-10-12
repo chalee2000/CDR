@@ -7,7 +7,8 @@
 export type Service = 'call' | 'sms' | 'data' | 'wifi' | 'other';
 export type Direction = 'out' | 'in' | 'fwd' | 'na';
 export type PeerKind = 'mobile' | 'landline' | 'intl' | 'shortcode' | 'alpha' | 'other' | 'none';
-export type SourceKind = 'FLAT' | 'VOICE' | 'IMS' | 'SMS' | 'DATA' | 'WIFI';
+/** 'VOICE+IMS' = one call logged in both the circuit-switched and the VoLTE sheet. */
+export type SourceKind = 'FLAT' | 'VOICE' | 'IMS' | 'VOICE+IMS' | 'SMS' | 'DATA' | 'WIFI';
 export type FormatId = 'ais' | 'dtac' | 'flat';
 export type CoordSource = 'file' | 'import' | 'approx';
 

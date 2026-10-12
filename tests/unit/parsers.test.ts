@@ -51,15 +51,41 @@ describe('DTAC multi-sheet layout', () => {
     expect(c.meta.declaredPeriod).toContain('2026/07/01');
   });
 
+  it('references every source row exactly once', () => {
+    const refs = c.interactions.flatMap((i) => i.rowRefs);
+    expect(new Set(refs).size).toBe(refs.length);
+    for (const s of wbC.sheets.filter((x) => x.name !== 'Info')) {
+      expect(refs.filter((r) => r.startsWith(`${s.name}!`))).toHaveLength(s.rows.length - 1);
+    }
+  });
+
   it('merges the originating and terminating records of an on-net call', () => {
-    const imsRows = wbC.sheets.find((s) => s.name === 'IMS service')!.rows.length - 1;
-    const ims = c.interactions.filter((i) => i.source === 'IMS');
-    const paired = ims.filter((i) => i.rowRefs.length === 2);
-    expect(paired.length).toBeGreaterThan(50);
-    expect(ims.length + paired.length).toBe(imsRows);
+    const paired = c.interactions.filter((i) => i.source === 'IMS' && i.rowRefs.length === 2);
+    expect(paired.length).toBeGreaterThan(30);
     for (const p of paired) {
       expect(p.targetObs?.imsi).toBe('520050000000303');
       expect(p.peerObs?.imsi).not.toBe('520050000000303');
+    }
+  });
+
+  it('counts a call logged in both the VOICE and the IMS sheet once', () => {
+    const both = c.interactions.filter((i) => i.source === 'VOICE+IMS');
+    expect(both.length).toBeGreaterThan(20);
+    for (const it of both) {
+      expect(it.rowRefs.some((r) => r.startsWith('VOICE service!'))).toBe(true);
+      expect(it.rowRefs.some((r) => r.startsWith('IMS service!'))).toBe(true);
+      expect(it.targetObs?.imsi).toBe('520050000000303');
+    }
+    // Unanswered attempts, whose VOICE row is written seconds after the IMS row.
+    expect(both.some((i) => i.answered === false)).toBe(true);
+    // Calls with all three rows (both IMS legs + the peer's VOICE leg).
+    expect(both.some((i) => i.rowRefs.length === 3)).toBe(true);
+    // No call of the same pair is left within 3 s of another.
+    const calls = c.interactions.filter((i) => i.service === 'call').sort((x, y) => x.ts - y.ts);
+    for (let k = 1; k < calls.length; k++) {
+      const p = calls[k - 1];
+      const q = calls[k];
+      if (p.peer === q.peer && p.direction === q.direction) expect(q.ts - p.ts).toBeGreaterThan(3000);
     }
   });
 

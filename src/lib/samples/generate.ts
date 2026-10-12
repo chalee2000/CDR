@@ -12,8 +12,9 @@ import type { RawSheet, RawWorkbook } from '../types';
  *  B 0820000202 (AIS, Nakhon Sawan) — shares X1 with A and X2 with C, calls C
  *                                    directly, a late-night call burst, trip
  *                                    to Bangkok on 2026-08-20.
- *  C 0630000303 (DTAC, Songkhla)   — on-net peers (paired IMS records),
- *                                    unanswered calls, Malaysian number, data
+ *  C 0630000303 (DTAC, Songkhla)   — on-net peers (paired IMS records, and
+ *                                    calls logged in BOTH the VOICE and IMS
+ *                                    sheets), unanswered calls, Malaysian number, data
  *                                    trail with coordinates on a trip to
  *                                    Bangkok where it meets B, and a peer whose
  *                                    handset is A's old phone.
@@ -256,15 +257,33 @@ function buildC(rand: () => number, bcCalls: { ts: number; out: boolean; dur: nu
     const [lac, ci, name, cell, tumbol, amphur, province, lat, lon] = cellCols(site, rand);
     ims.push([dtacTime(ts), a, b, dur === null ? null : String(dur), role, lac, ci, imsi, imei, dur === null ? null : 'VoiceCall', rand() < 0.9 ? '3GPP-E-UTRAN-FDD' : '3GPP-E-UTRAN-TDD', name, cell, tumbol, amphur, province, lat, lon]);
   };
-  /** One VoLTE call: the target's record, plus the peer's own record when on-net. */
+  const VOICE_HEADER = ['START TIME', 'A NUMBER', 'B NUMBER', 'DURATION', 'EVENT TYPE', 'LAC ID', 'CELL ID', 'IMEI', 'IMSI', 'INCOMING ROUTE', 'OUTGOING ROUTE', 'SITE_NAME', 'CELL_ID', 'TUMBON', 'AMPHUR', 'PROVINCE', 'LATITUDE', 'LONGITUDE'];
+  const voice: (string | null)[][] = [VOICE_HEADER];
+  /** A circuit-switched leg of the peer's own handset (VOICE sheet). */
+  const voiceLeg = (ts: number, a: string, b: string, dur: number, type: 'MO' | 'MT', on: (typeof ONNET)[string]) => {
+    const [lac, ci, name, cell, tumbol, amphur, province, lat, lon] = cellCols(on.site, rand);
+    voice.push([dtacTime(ts), a, b, String(dur), type, lac, ci, on.imei, on.imsi, 'VMGSC2I', type === 'MO' ? 'ZTRACO' : '7G382CO', name, cell, tumbol, amphur, province, lat, lon]);
+  };
+  /**
+   * One call: the target's VoLTE record plus, for an on-net peer, the peer's
+   * own leg — logged in IMS, in VOICE, or in BOTH (the duplication the
+   * parser must collapse). A VOICE leg of an unanswered attempt is written
+   * several seconds after the IMS row, as in real exports.
+   */
   const call = (ts: number, out: boolean, peer: string, dur: number | null) => {
     const a = out ? T : intl66(peer);
     const b = out ? intl66(peer) : T.startsWith('66') && rand() < 0.3 ? SAMPLE_TARGETS.C : T;
     imsRow(ts, a, b, dur, out ? 'ORIGINATING_ROLE' : 'TERMINATING_ROLE', C_IMSI, C_IMEI, siteAt(ts));
     const on = ONNET[peer];
-    if (on) {
+    if (!on) return;
+    const how = rand();
+    if (how < 0.6 || how >= 0.85) {
       const lag = rand() < 0.2 ? 1000 : 0;
       imsRow(ts + lag, a, b, dur === null ? null : Math.max(0, dur - (lag ? 1 : 0)), out ? 'TERMINATING_ROLE' : 'ORIGINATING_ROLE', on.imsi, on.imei, on.site);
+    }
+    if (how >= 0.6) {
+      const lag = dur === null ? (8 + Math.floor(rand() * 8)) * 1000 : 0;
+      voiceLeg(ts + lag, a, b, dur === null ? 0 : dur + (rand() < 0.5 ? 1 : 0), out ? 'MT' : 'MO', on);
     }
   };
 
@@ -285,9 +304,7 @@ function buildC(rand: () => number, bcCalls: { ts: number; out: boolean; dur: nu
   for (const c of bcCalls) call(c.ts, !c.out, SAMPLE_TARGETS.B, c.dur);
   call(meet - 10 * MIN, true, X2, 42);
 
-  // VOICE (circuit-switched) — a few calls plus forwarding to voicemail.
-  const VOICE_HEADER = ['START TIME', 'A NUMBER', 'B NUMBER', 'DURATION', 'EVENT TYPE', 'LAC ID', 'CELL ID', 'IMEI', 'IMSI', 'INCOMING ROUTE', 'OUTGOING ROUTE', 'SITE_NAME', 'CELL_ID', 'TUMBON', 'AMPHUR', 'PROVINCE', 'LATITUDE', 'LONGITUDE'];
-  const voice: (string | null)[][] = [VOICE_HEADER];
+  // VOICE (circuit-switched) — a few off-net calls plus forwarding to voicemail.
   for (let k = 0; k < 14; k++) {
     const ts = BASE + Math.floor(rand() * DAYS) * DAY + (9 + Math.floor(rand() * 10)) * HOUR + Math.floor(rand() * 3600) * 1000;
     const out = rand() < 0.5;

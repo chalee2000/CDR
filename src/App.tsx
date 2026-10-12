@@ -44,7 +44,7 @@ function Welcome() {
       </div>
       <ul className="feature-list">
         <li>
-          <strong>รูปแบบไฟล์ที่รองรับ</strong>AIS แบบตารางเดียว (START_DATETIME, A_NUMBER, B_NUMBER, RECORD_TYPE…), DTAC แบบหลายชีต (VOICE/IMS/SMS/DATA/WIFI) และตาราง .xlsx/.csv
+          <strong>รูปแบบไฟล์ที่รองรับ</strong>AIS แบบตารางเดียว (START_DATETIME, A_NUMBER, B_NUMBER, RECORD_TYPE…), True/DTAC แบบหลายชีต (VOICE/IMS/SMS/DATA/WIFI — รวมสายที่ถูกบันทึกซ้ำใน VOICE และ IMS ให้อัตโนมัติ) และตาราง .xlsx/.csv
           ทั่วไปที่จับคู่หัวคอลัมน์ให้อัตโนมัติหรือเลือกเองได้
         </li>
         <li>

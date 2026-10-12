@@ -33,7 +33,7 @@ export function ImportPanel() {
         }}
       >
         <strong>{busy ? 'กำลังอ่านไฟล์…' : 'ลากไฟล์มาวาง หรือคลิกเพื่อเลือก'}</strong>
-        <p>.xlsx หรือ .csv เลือกได้หลายไฟล์ (AIS, DTAC และตารางทั่วไป)</p>
+        <p>.xlsx หรือ .csv เลือกได้หลายไฟล์ (AIS, True/DTAC และตารางทั่วไป)</p>
       </div>
       <input
         ref={input}

@@ -85,7 +85,7 @@ test('excel export downloads a workbook', async ({ page }) => {
   expect(file.suggestedFilename()).toMatch(/^CDR-analysis_.*\.xlsx$/);
 });
 
-// CDR_EXPECT_RECORDS=350,300,1259 checks each file's record count (same order).
+// CDR_EXPECT_RECORDS=350,300,1262 checks each file's record count (same order).
 test('real exports load and render every tab', async ({ page }) => {
   const files = process.env.CDR_REAL_FILES?.split(':').filter(Boolean) ?? [];
   test.skip(files.length === 0, 'set CDR_REAL_FILES to run');
