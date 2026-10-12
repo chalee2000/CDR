@@ -111,18 +111,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [theme]);
 
+  // Parsing depends only on the files and the time interpretation; colours and
+  // aliases are applied afterwards so renaming a target does not re-parse.
+  const parsed = useMemo(
+    () => files.map((f) => ({ id: f.id, res: parseWorkbook(f.raw, settings.zMode, f.mapping) })),
+    [files, settings.zMode],
+  );
   const datasets = useMemo(() => {
     const out: Dataset[] = [];
-    for (const f of files) {
-      const res = parseWorkbook(f.raw, settings.zMode, f.mapping);
+    for (const { id, res } of parsed) {
       if (res.kind !== 'ok') continue;
       for (const d of res.drafts) {
-        const key = `${f.id}:${d.target}`;
+        const key = `${id}:${d.target}`;
         out.push(buildDataset(d, slots[key] ?? out.length, labels[key] ?? d.target, key));
       }
     }
     return out;
-  }, [files, settings.zMode, slots, labels]);
+  }, [parsed, slots, labels]);
 
   useEffect(() => {
     if (datasets.length === 0) setSelectedId(undefined);
