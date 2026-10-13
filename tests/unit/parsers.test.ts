@@ -131,26 +131,15 @@ describe('DTAC multi-sheet layout', () => {
     return drafts(parseWorkbook({ ...wbC, sheets }, 'local', undefined, { imsiOwners }))[0];
   }
 
-  it('keeps a SIM change in the same handset as the target, and peers as peers, without a DATA sheet', () => {
-    const d = simChange();
-    expect(new Set(d.meta.targetImsis)).toEqual(new Set([OLD, NEW]));
-    const check = d.meta.imsiCheck!;
-    expect(check.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'target', basis: 'sim-change' });
-    expect(check.find((x) => x.imsi === OLD)).toMatchObject({ owner: 'target', basis: 'main' });
-    // The same rows are the target's as with the original SIMs.
-    const before = c.interactions.filter((i) => i.source !== 'DATA' && i.targetObs?.cell).length;
-    expect(d.interactions.filter((i) => i.targetObs?.cell).length).toBe(before);
-    expect(d.interactions.some((i) => i.peerObs?.imsi === NEW || i.peerObs?.imsi === OLD)).toBe(false);
-    expect(d.meta.notes.some((n) => n.includes('มากกว่า 1 ใบ'))).toBe(true);
-  });
-
-  it('treats the target as having one SIM: a new SIM in another handset stays a peer, flagged for review', () => {
-    const d = simChange('35000000999999');
-    expect(d.meta.targetImsis).toEqual([OLD]);
-    expect(d.meta.imsiCheck!.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'peer', basis: 'review', imeis: ['35000000999999'] });
-    // Neither its positions nor its handset are counted as the target's.
-    expect(d.interactions.some((i) => i.targetObs?.imsi === NEW || i.targetObs?.imei === '35000000999999')).toBe(false);
-    expect(d.meta.notes.some((n) => n.includes('ควรตรวจสอบ'))).toBe(true);
+  it('gives the target one SIM: another IMSI and its handset are a peer\'s, even in the same phone', () => {
+    for (const d of [simChange(), simChange('35000000999999')]) {
+      expect(d.meta.targetImsis).toEqual([OLD]);
+      expect(d.meta.imsiCheck!.find((x) => x.imsi === OLD)).toMatchObject({ owner: 'target', basis: 'main' });
+      expect(d.meta.imsiCheck!.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'peer', basis: 'other' });
+      expect(d.interactions.some((i) => i.targetObs?.imsi === NEW)).toBe(false);
+      expect(d.interactions.some((i) => i.peerObs?.imsi === NEW)).toBe(true);
+    }
+    expect(simChange('35000000999999').interactions.some((i) => i.targetObs?.imei === '35000000999999')).toBe(false);
   });
 
   it('lets the investigator settle the owner of a SIM', () => {
@@ -228,6 +217,27 @@ describe('DTAC multi-sheet layout', () => {
     const wifi = c.interactions.filter((i) => i.service === 'wifi');
     expect(wifi).toHaveLength(1);
     expect(wifi[0].durationSec).toBe(640);
+  });
+});
+
+describe('one SIM per target in single-table (AIS) files', () => {
+  it('files rows of any other IMSI, with their cell and IMEI, under the other party', () => {
+    const head = wbA.sheets[0].rows[0] as string[];
+    const ii = head.indexOf('IMSI');
+    const ie = head.indexOf('IMEI');
+    const rows = wbA.sheets[0].rows.map((r, k) => (k > 0 && k % 50 === 0 ? r.map((v, j) => (j === ii ? '520039999999999' : j === ie ? '35999999000001' : v)) : r));
+    const [d] = drafts(parseWorkbook({ ...wbA, sheets: [{ ...wbA.sheets[0], rows }] }, 'local'));
+    const [orig] = drafts(parseWorkbook(wbA, 'local'));
+    expect(d.interactions.length).toBe(orig.interactions.length);
+    expect(d.meta.targetImsis).toEqual(orig.meta.targetImsis);
+    const moved = d.interactions.filter((i) => i.peerObs?.imsi === '520039999999999');
+    expect(moved.length).toBe(Math.floor((rows.length - 1) / 50));
+    expect(moved.every((i) => !i.targetObs && i.peerObs?.imei === '35999999000001')).toBe(true);
+    expect(d.meta.imsiCheck!.map((x) => [x.owner, x.basis])).toEqual([['target', 'main'], ['peer', 'other']]);
+    expect(d.meta.notes.some((n) => n.includes('IMSI อื่นอีก 1 ค่า'))).toBe(true);
+    // The investigator can still say otherwise.
+    const [m] = drafts(parseWorkbook({ ...wbA, sheets: [{ ...wbA.sheets[0], rows }] }, 'local', undefined, { imsiOwners: { '520039999999999': 'target' } }));
+    expect(m.meta.imsiCheck!.find((x) => x.imsi === '520039999999999')).toMatchObject({ owner: 'target', basis: 'manual', auto: 'peer' });
   });
 });
 

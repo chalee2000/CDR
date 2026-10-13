@@ -153,7 +153,7 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
       rows: sims.map(({ ds, c }) => [
         ds.target,
         c.imsi || '(ไม่มี IMSI)',
-        (c.owner === 'target' ? 'เป้าหมาย' : c.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย') + (c.basis === 'manual' ? ' (กำหนดเอง)' : ''),
+        (c.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย') + (c.basis === 'manual' ? ' (กำหนดเอง)' : ''),
         text(c.number),
         c.imeis.join(' '),
         c.rows,

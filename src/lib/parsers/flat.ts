@@ -1,4 +1,5 @@
-import type { ColumnMapping, FlatField, Interaction, Observation, RawSheet, SheetStat, ZMode } from '../types';
+import { imeiCore } from '../imei';
+import type { ColumnMapping, FlatField, ImsiCheck, ImsiOwners, Interaction, Observation, RawSheet, SheetStat, ZMode } from '../types';
 import { normalizeNumber, operatorFromPlmn } from '../phone';
 import { parseDateAndClock, parseWallClock } from '../time';
 import { clean, countBy, mode, toNumber } from '../util';
@@ -26,6 +27,7 @@ export function parseFlatSheet(
   mapping: Pick<ColumnMapping, 'headerRow' | 'columns' | 'target'>,
   fileName: string,
   zMode: ZMode,
+  imsiOwners: ImsiOwners = {},
 ): DatasetDraft {
   const cols = mapping.columns;
   const get = (row: (string | null)[], f: FlatField): string | null => {
@@ -158,6 +160,23 @@ export function parseFlatSheet(
     stat.used++;
   });
 
+  // ---- One SIM per target: the IMSI used most in the target's own rows.
+  // A row with any other IMSI was written for another subscriber, so its
+  // cell and handset (IMEI) are the other party's, not the target's.
+  const autoMain = mode(interactions, (it) => it.targetObs?.imsi);
+  const isTargetSim = (imsi: string) => (imsiOwners[imsi] ? imsiOwners[imsi] === 'target' : imsi === autoMain);
+  let foreign = 0;
+  for (const it of interactions) {
+    const imsi = it.targetObs?.imsi;
+    if (!imsi || isTargetSim(imsi)) continue;
+    it.peerObs = it.targetObs;
+    delete it.targetObs;
+    stat.peerOwned++;
+    foreign++;
+  }
+  const imsiCheck = flatImsiCheck(interactions, target, autoMain, imsiOwners);
+  const manual = imsiCheck.filter((c) => c.basis === 'manual').length;
+
   const plmn = mode(body, (r) => clean(get(r, 'plmn')));
   const operator = operatorFromPlmn(plmn) ?? (isAis ? 'AIS' : undefined);
   const notes: string[] = [];
@@ -177,6 +196,13 @@ export function parseFlatSheet(
   if (notInvolving > 0) {
     notes.push(`มี ${notInvolving} แถวที่ทั้งฝั่ง A และ B ไม่ใช่หมายเลขเป้าหมาย`);
   }
+  if (foreign > 0) {
+    const others = imsiCheck.filter((c) => c.owner === 'peer' && c.imsi).length;
+    notes.push(
+      `เป้าหมายใช้ IMSI เดียว แต่ไฟล์มี IMSI อื่นอีก ${others} ค่า (${foreign.toLocaleString('th-TH')} แถว) แถวเหล่านี้ถือเป็นของคู่สาย ทั้งพิกัดและเครื่อง (IMEI) จึงไม่นับเป็นของเป้าหมาย (ดูตาราง "ตรวจเจ้าของพิกัดจาก IMSI")`,
+    );
+  }
+  if (manual > 0) notes.push(`ผู้ใช้กำหนดเจ้าของ IMSI เอง ${manual} ค่า (แทนผลที่ระบบตัดสิน) พิกัดและเครื่องของซิมเหล่านี้นับตามที่กำหนด`);
 
   return {
     fileName,
@@ -188,9 +214,52 @@ export function parseFlatSheet(
       operator,
       sheets: [stat],
       targetImsis: [...new Set(interactions.filter((x) => x.targetObs?.imsi).map((x) => x.targetObs!.imsi!))],
+      ...(imsiCheck.length ? { imsiCheck } : {}),
       notes,
       zMode,
       hasCoordinates,
     },
   };
+}
+
+/** Every SIM in a single-table file, whose it is, and where its positions are counted. */
+function flatImsiCheck(interactions: Interaction[], target: string, autoMain: string | undefined, imsiOwners: ImsiOwners): ImsiCheck[] {
+  const sims = new Map<string, { rows: number; withCell: number; mine: boolean; numbers: Map<string, number>; imeis: Map<string, number>; firstTs: number; lastTs: number }>();
+  for (const it of interactions) {
+    const obs = it.targetObs ?? it.peerObs;
+    if (!obs?.imsi) continue;
+    let t = sims.get(obs.imsi);
+    if (!t) {
+      t = { rows: 0, withCell: 0, mine: !!it.targetObs, numbers: new Map(), imeis: new Map(), firstTs: it.ts, lastTs: it.ts };
+      sims.set(obs.imsi, t);
+    }
+    t.rows++;
+    if (obs.cell) t.withCell++;
+    if (it.peerObs === obs && it.peer) t.numbers.set(it.peer, (t.numbers.get(it.peer) ?? 0) + 1);
+    const core = imeiCore(obs.imei);
+    if (core) t.imeis.set(core, (t.imeis.get(core) ?? 0) + 1);
+    t.firstTs = Math.min(t.firstTs, it.ts);
+    t.lastTs = Math.max(t.lastTs, it.ts);
+  }
+  if (sims.size === 0) return [];
+  return [...sims]
+    .map(([imsi, t]): ImsiCheck => {
+      const owner = t.mine ? 'target' : 'peer';
+      const auto = imsi === autoMain ? 'target' : 'peer';
+      const number = owner === 'target' ? target : [...t.numbers].sort((x, y) => y[1] - x[1])[0]?.[0];
+      return {
+        imsi,
+        owner,
+        ...(number ? { number } : {}),
+        basis: imsiOwners[imsi] && imsiOwners[imsi] !== auto ? 'manual' : auto === 'target' ? 'main' : 'other',
+        auto,
+        inData: false,
+        imeis: [...t.imeis].sort((x, y) => y[1] - x[1]).map(([e]) => e),
+        rows: t.rows,
+        withCell: t.withCell,
+        firstTs: t.firstTs,
+        lastTs: t.lastTs,
+      };
+    })
+    .sort((x, y) => (x.owner === y.owner ? y.rows - x.rows : x.owner === 'target' ? -1 : 1));
 }

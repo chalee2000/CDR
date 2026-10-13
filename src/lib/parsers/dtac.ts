@@ -1,7 +1,7 @@
 import type { Cell, ImsiCheck, ImsiOwners, Interaction, Observation, RawSheet, RawWorkbook, SheetStat, SourceKind, ZMode } from '../types';
 import { normalizeNumber, operatorFromPlmn, type PhoneInfo } from '../phone';
 import { parseWallClock } from '../time';
-import { imeiCore, likelySameHandset } from '../imei';
+import { imeiCore } from '../imei';
 import { clean, mode, toNumber } from '../util';
 import { exactIndex, makeCell, rowSignature } from './table';
 import type { DatasetDraft } from './index';
@@ -217,7 +217,6 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     for (const r of data.rows.slice(1)) {
       const imsi = clean(r[col('IMSI')]);
       if (!imsi) continue;
-      targetImsis.add(imsi);
       tallySim(sims, imsi, parseWallClock(r[col('START TIME')], zMode), !!cellFrom(r, col), clean(r[col('IMEI')])).data++;
     }
   }
@@ -309,41 +308,24 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
       if (other) t.numbers.set(other, (t.numbers.get(other) ?? 0) + 1);
     }
   }
-  const basis = new Map<string, ImsiCheck['basis']>([...targetImsis].map((i) => [i, 'data']));
-  // Without DATA rows, the SIM most often on the target's side of the events.
-  if (targetImsis.size === 0) {
-    const top = mode(roleOwnedImsis, (x) => x);
-    if (top) {
-      targetImsis.add(top);
-      basis.set(top, 'main');
-    }
+  // ---- One SIM per target: the IMSI of the DATA sheet (only the target's
+  // sessions by subpoena), else the one most often on the target's side of
+  // the events. Every other IMSI, and the handset (IMEI) in its rows, is a
+  // peer's.
+  const basis = new Map<string, ImsiCheck['basis']>();
+  const dataTop = [...sims].filter(([, t]) => t.data > 0).sort((x, y) => y[1].data - x[1].data)[0]?.[0];
+  const main = dataTop ?? mode(roleOwnedImsis, (x) => x);
+  if (main) {
+    targetImsis.add(main);
+    basis.set(main, dataTop ? 'data' : 'main');
   }
-  // The target is taken to have one SIM. Another SIM is the target's only on
-  // strong evidence of a SIM change: it sits on the target's side of its
-  // events, is never in use while the target's SIMs are (one number, one SIM
-  // at a time; a peer's SIM is in use alongside the target's), and it was
-  // used in a handset the target's SIM was also used in. Without that shared
-  // handset it stays a peer's, flagged for review: its IMEI may well be the
-  // peer's phone.
-  const candidates = [...sims].filter(([imsi, t]) => !targetImsis.has(imsi) && t.targetSide >= 2 && t.targetSide > t.peerSide);
-  for (const [imsi, t] of candidates.sort((x, y) => y[1].targetSide - x[1].targetSide)) {
-    const known = [...targetImsis].map((o) => sims.get(o)).filter((u): u is SimTally => !!u);
-    if (known.some((u) => t.firstTs <= u.lastTs && u.firstTs <= t.lastTs)) continue;
-    const handsets = known.flatMap((u) => [...u.imeis.keys()]);
-    const sameHandset = [...t.imeis.keys()].some((e) => handsets.some((h) => h === e || likelySameHandset(h, e)));
-    if (sameHandset) {
-      targetImsis.add(imsi);
-      basis.set(imsi, 'sim-change');
-    } else basis.set(imsi, 'review');
-  }
-
   // The investigator's word over the rules, for SIMs outside the DATA sheet
   // (that sheet holds only the target's sessions by subpoena).
   const autoTarget = new Set(targetImsis);
   let manual = 0;
   for (const [imsi, owner] of Object.entries(imsiOwners)) {
     const t = sims.get(imsi);
-    if (!t || t.data > 0 || (owner === 'target') === autoTarget.has(imsi)) continue;
+    if (!t || imsi === dataTop || (owner === 'target') === autoTarget.has(imsi)) continue;
     if (owner === 'target') targetImsis.add(imsi);
     else targetImsis.delete(imsi);
     basis.set(imsi, 'manual');
@@ -380,9 +362,9 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
         imsi,
         owner: mine ? 'target' : 'peer',
         ...(number ? { number } : {}),
-        basis: basis.get(imsi) === 'manual' ? 'manual' : mine ? (basis.get(imsi) ?? 'other') : basis.get(imsi) === 'review' ? 'review' : 'other',
+        basis: basis.get(imsi) === 'manual' ? 'manual' : mine ? (basis.get(imsi) ?? 'main') : 'other',
         auto: autoTarget.has(imsi) ? 'target' : 'peer',
-        inData: t.data > 0,
+        inData: imsi === dataTop,
         imeis: [...t.imeis].sort((x, y) => y[1] - x[1]).map(([e]) => e),
         rows: t.rows,
         withCell: t.withCell,
@@ -639,16 +621,6 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     notes.push(
       `แถว IMS ที่ใช้ IMSI ของเป้าหมายแต่ไม่มี IMEI ${farCells.toLocaleString('th-TH')} แถวมีพิกัด: แถวเหล่านี้ไม่ได้บันทึกจากเครื่องของเป้าหมาย พิกัดมักอยู่คนละพื้นที่กับเป้าหมาย (เช่น สายเดียวกันในชีต VOICE ที่มี IMEI อยู่คนละจังหวัด) และน่าจะเป็นตำแหน่งของฝั่งคู่สาย ระบบจึงไม่นับเป็นตำแหน่งของเป้าหมาย และแสดงบนแผนที่เป็นสี่เหลี่ยม`,
     );
-  }
-  const review = imsiCheck.filter((c) => c.basis === 'review').length;
-  if (review > 0) {
-    notes.push(
-      `พบ IMSI อื่น ${review} ค่าที่อยู่ฝั่งเป้าหมายและใช้ไม่ทับช่วงเวลากับซิมของเป้าหมาย แต่ใช้กับเครื่อง (IMEI) ที่ซิมของเป้าหมายไม่เคยใช้ ระบบถือว่าเป็นของคู่สายและไม่นับพิกัดเป็นของเป้าหมาย ควรตรวจสอบว่าเป้าหมายเปลี่ยนทั้งซิมและเครื่องหรือไม่ (ดูตาราง "ตรวจเจ้าของพิกัดจาก IMSI")`,
-    );
-  }
-  const changed = imsiCheck.filter((c) => c.basis === 'sim-change').length;
-  if (changed > 0) {
-    notes.push(`เป้าหมายใช้ซิมมากกว่า 1 ใบในช่วงข้อมูล (พบ IMSI ของเป้าหมาย ${targetImsis.size} ค่า ใช้ต่างช่วงเวลากันในเครื่องเดียวกัน) ระบบนับพิกัดจากทุกซิมของเป้าหมายเป็นตำแหน่งของเป้าหมาย`);
   }
   if (mergedRows > 0) {
     notes.push(

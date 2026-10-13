@@ -43,18 +43,18 @@ function servedNumbers(sheet: RawSheet, headerRow: number, aCol: number): string
     .map(([k]) => k);
 }
 
-function parseFlat(sheet: RawSheet, mapping: Pick<ColumnMapping, 'headerRow' | 'columns' | 'target'>, fileName: string, zMode: ZMode): DatasetDraft[] {
+function parseFlat(sheet: RawSheet, mapping: Pick<ColumnMapping, 'headerRow' | 'columns' | 'target'>, fileName: string, zMode: ZMode, imsiOwners?: ImsiOwners): DatasetDraft[] {
   if (!mapping.target && mapping.columns.type !== undefined && mapping.columns.a !== undefined) {
     const served = servedNumbers(sheet, mapping.headerRow, mapping.columns.a);
     if (served.length >= 2) {
       const aCol = mapping.columns.a;
       return served.map((key) => {
         const rows = sheet.rows.filter((r, i) => i <= mapping.headerRow || normalizeNumber(r[aCol]).key === key);
-        return parseFlatSheet({ name: sheet.name, rows }, { ...mapping, target: key }, fileName, zMode);
+        return parseFlatSheet({ name: sheet.name, rows }, { ...mapping, target: key }, fileName, zMode, imsiOwners);
       });
     }
   }
-  return [parseFlatSheet(sheet, mapping, fileName, zMode)];
+  return [parseFlatSheet(sheet, mapping, fileName, zMode, imsiOwners)];
 }
 
 /** Several sheets/blocks of the same target in one workbook become one dataset. */
@@ -89,7 +89,7 @@ export function parseWorkbook(wb: RawWorkbook, zMode: ZMode, mapping?: ColumnMap
   if (mapping) {
     const sheet = wb.sheets.find((s) => s.name === mapping.sheet);
     if (!sheet) return { kind: 'needs-mapping', suggestions: suggest(wb), reason: 'ไม่พบชีตที่เลือก' };
-    return { kind: 'ok', drafts: mergeByTarget(parseFlat(sheet, mapping, wb.fileName, zMode)) };
+    return { kind: 'ok', drafts: mergeByTarget(parseFlat(sheet, mapping, wb.fileName, zMode, opts.imsiOwners)) };
   }
 
   if (looksLikeDtac(wb)) {
@@ -101,7 +101,7 @@ export function parseWorkbook(wb: RawWorkbook, zMode: ZMode, mapping?: ColumnMap
     const header = findHeader(sheet);
     if (!header || !hasRequired(header.columns)) continue;
     if (sheet.rows.length <= header.headerRow + 1) continue;
-    drafts.push(...parseFlat(sheet, header, wb.fileName, zMode));
+    drafts.push(...parseFlat(sheet, header, wb.fileName, zMode, opts.imsiOwners));
   }
   const usable = drafts.filter((d) => d.interactions.length > 0);
   if (usable.length > 0) return { kind: 'ok', drafts: mergeByTarget(usable) };

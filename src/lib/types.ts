@@ -93,14 +93,12 @@ export interface ImsiCheck {
   /** The number using this SIM: the target, or the party on the handset's side of its events. */
   number?: string;
   /**
-   * data: in the DATA sheet (only the target's sessions); main: most often on
-   * the target's side; sim-change: on the target's side, never in use while
-   * the target's other SIMs are, and in a handset (IMEI) the target's SIM
-   * also used; review: like sim-change but in other handsets only, so kept
-   * as a peer for the investigator to check; other: another handset; role:
-   * no IMSI; manual: set by the user (see auto).
+   * The target has one SIM. data: the IMSI of the DATA sheet (only the
+   * target's sessions); main: the IMSI most used in the target's own rows;
+   * other: any other IMSI, a peer's (with its IMEI); role: rows without an
+   * IMSI; manual: set by the user (see auto).
    */
-  basis: 'data' | 'main' | 'sim-change' | 'review' | 'other' | 'role' | 'manual';
+  basis: 'data' | 'main' | 'other' | 'role' | 'manual';
   /** What the automatic rules decided (differs from owner only when set by hand). */
   auto: 'target' | 'peer';
   /** Seen in the DATA sheet, which by subpoena holds only the target's sessions. */
