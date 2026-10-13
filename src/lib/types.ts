@@ -88,10 +88,15 @@ export interface ImsiCheck {
   number?: string;
   /**
    * data: in the DATA sheet (only the target's sessions); main: most often on
-   * the target's side; sim-change: on the target's side, in use only while the
-   * target's other SIMs are not; other: another handset; role: no IMSI.
+   * the target's side; sim-change: on the target's side, never in use while
+   * the target's other SIMs are, and in a handset (IMEI) the target's SIM
+   * also used; review: like sim-change but in other handsets only, so kept
+   * as a peer for the investigator to check; other: another handset; role:
+   * no IMSI.
    */
-  basis: 'data' | 'main' | 'sim-change' | 'other' | 'role';
+  basis: 'data' | 'main' | 'sim-change' | 'review' | 'other' | 'role';
+  /** Handsets (IMEI, first 14 digits) seen with this SIM, most used first. */
+  imeis: string[];
   rows: number;
   withCell: number;
   firstTs: number;

@@ -9,6 +9,8 @@ export interface DeviceUse {
   imei15: string;
   tac: string;
   rawValues: string[];
+  /** SIMs (IMSI) seen in the target's rows with this handset. */
+  imsis: string[];
   count: number;
   days: number;
   firstTs: number;
@@ -50,7 +52,7 @@ export interface DeviceStats {
  * rows are excluded: their IMEI field is not reliably the handset.
  */
 export function deviceStats(ds: Dataset, settings: Pick<Settings, 'dedupeExact'> = DEFAULT_SETTINGS): DeviceStats {
-  const imeis = new Map<string, DeviceUse & { _days: Set<string>; _raw: Set<string> }>();
+  const imeis = new Map<string, DeviceUse & { _days: Set<string>; _raw: Set<string>; _imsi: Set<string> }>();
   const imsis = new Map<string, ImsiUse>();
   const runs: DeviceRun[] = [];
   const peerDev = new Map<string, PeerDevice>();
@@ -63,7 +65,7 @@ export function deviceStats(ds: Dataset, settings: Pick<Settings, 'dedupeExact'>
       if (core) {
         let d = imeis.get(core);
         if (!d) {
-          d = { core, imei15: imei15(core), tac: tacOf(core), rawValues: [], count: 0, days: 0, firstTs: it.ts, lastTs: it.ts, _days: new Set(), _raw: new Set() };
+          d = { core, imei15: imei15(core), tac: tacOf(core), rawValues: [], imsis: [], count: 0, days: 0, firstTs: it.ts, lastTs: it.ts, _days: new Set(), _raw: new Set(), _imsi: new Set() };
           imeis.set(core, d);
         }
         d.count++;
@@ -71,6 +73,7 @@ export function deviceStats(ds: Dataset, settings: Pick<Settings, 'dedupeExact'>
         d.lastTs = Math.max(d.lastTs, it.ts);
         d._days.add(dayKey(it.ts));
         if (obs.imei) d._raw.add(obs.imei);
+        if (obs.imsi) d._imsi.add(obs.imsi);
         const last = runs[runs.length - 1];
         if (last && last.core === core) {
           last.to = it.ts;
@@ -100,7 +103,7 @@ export function deviceStats(ds: Dataset, settings: Pick<Settings, 'dedupeExact'>
   }
 
   const list = [...imeis.values()]
-    .map(({ _days, _raw, ...d }) => ({ ...d, days: _days.size, rawValues: [..._raw] }))
+    .map(({ _days, _raw, _imsi, ...d }) => ({ ...d, days: _days.size, rawValues: [..._raw], imsis: [..._imsi] }))
     .sort((a, b) => a.firstTs - b.firstTs);
 
   // Dual-SIM candidates: neighbouring serials of one model. The SIM may have

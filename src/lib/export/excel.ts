@@ -149,12 +149,13 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
   if (sims.length) {
     tables.push({
       sheet: 'ตรวจเจ้าของพิกัด_IMSI',
-      header: ['เป้าหมาย', 'IMSI', 'เป็นของ', 'เลขหมายที่ใช้ซิมนี้', 'แถว', 'แถวที่มีพิกัด', 'ใช้พิกัดเป็น', 'ครั้งแรก', 'ล่าสุด', 'เหตุผล'],
+      header: ['เป้าหมาย', 'IMSI', 'เป็นของ', 'เลขหมายที่ใช้ซิมนี้', 'IMEI ที่ใช้กับซิมนี้', 'แถว', 'แถวที่มีพิกัด', 'ใช้พิกัดเป็น', 'ครั้งแรก', 'ล่าสุด', 'เหตุผล'],
       rows: sims.map(({ ds, c }) => [
         ds.target,
         c.imsi || '(ไม่มี IMSI)',
-        c.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย',
+        c.owner === 'target' ? 'เป้าหมาย' : c.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย',
         text(c.number),
+        c.imeis.join(' '),
         c.rows,
         c.withCell,
         imsiUseTh(c),

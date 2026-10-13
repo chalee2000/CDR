@@ -21,6 +21,7 @@ export function DevicesView() {
     { key: 'i15', header: 'IMEI 15 หลัก (คำนวณ check digit)', render: (x) => <span className="mono">{x.imei15}</span>, sortValue: (x) => x.imei15 },
     { key: 'tac', header: 'TAC (รุ่นเครื่อง)', render: (x) => <span className="mono">{x.tac}</span>, sortValue: (x) => x.tac },
     { key: 'raw', header: 'ค่าในไฟล์', render: (x) => <span className="mono">{x.rawValues.join(', ')}</span>, csv: (x) => x.rawValues.join(' ') },
+    { key: 'imsi', header: 'ใช้กับซิม (IMSI)', render: (x) => <span className="mono">{x.imsis.join(', ') || '-'}</span>, csv: (x) => x.imsis.join(' ') },
     { key: 'n', header: 'ครั้ง', num: true, render: (x) => fmtInt(x.count), sortValue: (x) => x.count },
     { key: 'days', header: 'จำนวนวัน', num: true, render: (x) => fmtInt(x.days), sortValue: (x) => x.days },
     { key: 'first', header: 'ใช้ครั้งแรก', render: (x) => fmtDateTime(x.firstTs, y), sortValue: (x) => x.firstTs, csv: (x) => isoText(x.firstTs) },

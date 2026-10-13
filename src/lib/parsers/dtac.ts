@@ -1,6 +1,7 @@
 import type { Cell, ImsiCheck, Interaction, Observation, RawSheet, RawWorkbook, SheetStat, SourceKind, ZMode } from '../types';
 import { normalizeNumber, operatorFromPlmn, type PhoneInfo } from '../phone';
 import { parseWallClock } from '../time';
+import { imeiCore, likelySameHandset } from '../imei';
 import { clean, mode, toNumber } from '../util';
 import { exactIndex, makeCell, rowSignature } from './table';
 import type { DatasetDraft } from './index';
@@ -139,19 +140,23 @@ interface SimTally {
   peerSide: number;
   /** Numbers on the SIM's side of its events that are not the target. */
   numbers: Map<string, number>;
+  /** Handsets (IMEI core) the SIM was used in. */
+  imeis: Map<string, number>;
   firstTs: number;
   lastTs: number;
 }
 
 const finite = (ts: number) => (Number.isFinite(ts) ? ts : NaN);
 
-function tallySim(sims: Map<string, SimTally>, imsi: string, ts: number, withCell: boolean): SimTally {
+function tallySim(sims: Map<string, SimTally>, imsi: string, ts: number, withCell: boolean, imei: string | null | undefined): SimTally {
   let t = sims.get(imsi);
   if (!t) {
-    t = { rows: 0, withCell: 0, data: 0, targetSide: 0, peerSide: 0, numbers: new Map(), firstTs: Infinity, lastTs: -Infinity };
+    t = { rows: 0, withCell: 0, data: 0, targetSide: 0, peerSide: 0, numbers: new Map(), imeis: new Map(), firstTs: Infinity, lastTs: -Infinity };
     sims.set(imsi, t);
   }
   t.rows++;
+  const core = imeiCore(imei);
+  if (core) t.imeis.set(core, (t.imeis.get(core) ?? 0) + 1);
   if (withCell) t.withCell++;
   if (!Number.isNaN(ts)) {
     t.firstTs = Math.min(t.firstTs, ts);
@@ -207,7 +212,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
       const imsi = clean(r[col('IMSI')]);
       if (!imsi) continue;
       targetImsis.add(imsi);
-      tallySim(sims, imsi, parseWallClock(r[col('START TIME')], zMode), !!cellFrom(r, col)).data++;
+      tallySim(sims, imsi, parseWallClock(r[col('START TIME')], zMode), !!cellFrom(r, col), clean(r[col('IMEI')])).data++;
     }
   }
 
@@ -285,7 +290,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
   // SIM is a same-network peer's leg, and its cell is the peer's position.
   for (const r of comm) {
     if (!r.obs.imsi) continue;
-    const t = tallySim(sims, r.obs.imsi, r.ts, !!r.obs.cell);
+    const t = tallySim(sims, r.obs.imsi, r.ts, !!r.obs.cell, r.obs.imei);
     // A forwarding record is written by the network, not by a handset on either side.
     if (r.kind === 'VOICE' && r.type.toUpperCase() === 'CF') continue;
     const sideKey = r.roleSide === 'A' ? r.a.key : r.b.key;
@@ -305,19 +310,23 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
       basis.set(top, 'main');
     }
   }
-  // A number has one SIM at a time: another SIM on the target's side that is
-  // never in use while the target's known SIMs are is a SIM change. A peer's
-  // SIM is in use alongside the target's, so it never qualifies.
+  // The target is taken to have one SIM. Another SIM is the target's only on
+  // strong evidence of a SIM change: it sits on the target's side of its
+  // events, is never in use while the target's SIMs are (one number, one SIM
+  // at a time; a peer's SIM is in use alongside the target's), and it was
+  // used in a handset the target's SIM was also used in. Without that shared
+  // handset it stays a peer's, flagged for review: its IMEI may well be the
+  // peer's phone.
   const candidates = [...sims].filter(([imsi, t]) => !targetImsis.has(imsi) && t.targetSide >= 2 && t.targetSide > t.peerSide);
   for (const [imsi, t] of candidates.sort((x, y) => y[1].targetSide - x[1].targetSide)) {
-    const overlaps = [...targetImsis].some((o) => {
-      const u = sims.get(o);
-      return !!u && t.firstTs <= u.lastTs && u.firstTs <= t.lastTs;
-    });
-    if (!overlaps) {
+    const known = [...targetImsis].map((o) => sims.get(o)).filter((u): u is SimTally => !!u);
+    if (known.some((u) => t.firstTs <= u.lastTs && u.firstTs <= t.lastTs)) continue;
+    const handsets = known.flatMap((u) => [...u.imeis.keys()]);
+    const sameHandset = [...t.imeis.keys()].some((e) => handsets.some((h) => h === e || likelySameHandset(h, e)));
+    if (sameHandset) {
       targetImsis.add(imsi);
       basis.set(imsi, 'sim-change');
-    }
+    } else basis.set(imsi, 'review');
   }
 
   const byRole = { target: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity }, peer: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity } };
@@ -343,7 +352,8 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
         imsi,
         owner: mine ? 'target' : 'peer',
         ...(number ? { number } : {}),
-        basis: basis.get(imsi) ?? 'other',
+        basis: mine ? (basis.get(imsi) ?? 'other') : basis.get(imsi) === 'review' ? 'review' : 'other',
+        imeis: [...t.imeis].sort((x, y) => y[1] - x[1]).map(([e]) => e),
         rows: t.rows,
         withCell: t.withCell,
         firstTs: finite(t.firstTs),
@@ -353,7 +363,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     .sort((x, y) => (x.owner === y.owner ? y.rows - x.rows : x.owner === 'target' ? -1 : 1));
   for (const owner of ['target', 'peer'] as const) {
     const b = byRole[owner];
-    if (b.rows) imsiCheck.push({ imsi: '', owner, ...(owner === 'target' && target ? { number: target } : {}), basis: 'role', rows: b.rows, withCell: b.withCell, firstTs: finite(b.firstTs), lastTs: finite(b.lastTs) });
+    if (b.rows) imsiCheck.push({ imsi: '', owner, ...(owner === 'target' && target ? { number: target } : {}), basis: 'role', imeis: [], rows: b.rows, withCell: b.withCell, firstTs: finite(b.firstTs), lastTs: finite(b.lastTs) });
   }
 
   // ---- Merge every row of the same communication, across VOICE and IMS.
@@ -586,9 +596,15 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
         ` ระบบแยกตำแหน่งของคู่สายออกจากตำแหน่งของเป้าหมายโดยดูจาก IMSI ตำแหน่งเหล่านี้จึงไม่ถูกนับเป็นตำแหน่งของเป้าหมาย (ดูตาราง "ตรวจเจ้าของพิกัดจาก IMSI")`,
     );
   }
+  const review = imsiCheck.filter((c) => c.basis === 'review').length;
+  if (review > 0) {
+    notes.push(
+      `พบ IMSI อื่น ${review} ค่าที่อยู่ฝั่งเป้าหมายและใช้ไม่ทับช่วงเวลากับซิมของเป้าหมาย แต่ใช้กับเครื่อง (IMEI) ที่ซิมของเป้าหมายไม่เคยใช้ ระบบถือว่าเป็นของคู่สายและไม่นับพิกัดเป็นของเป้าหมาย ควรตรวจสอบว่าเป้าหมายเปลี่ยนทั้งซิมและเครื่องหรือไม่ (ดูตาราง "ตรวจเจ้าของพิกัดจาก IMSI")`,
+    );
+  }
   const changed = imsiCheck.filter((c) => c.basis === 'sim-change').length;
   if (changed > 0) {
-    notes.push(`เป้าหมายใช้ซิมมากกว่า 1 ใบในช่วงข้อมูล (พบ IMSI ของเป้าหมาย ${targetImsis.size} ค่า ใช้ต่างช่วงเวลากัน) ระบบนับพิกัดจากทุกซิมของเป้าหมายเป็นตำแหน่งของเป้าหมาย`);
+    notes.push(`เป้าหมายใช้ซิมมากกว่า 1 ใบในช่วงข้อมูล (พบ IMSI ของเป้าหมาย ${targetImsis.size} ค่า ใช้ต่างช่วงเวลากันในเครื่องเดียวกัน) ระบบนับพิกัดจากทุกซิมของเป้าหมายเป็นตำแหน่งของเป้าหมาย`);
   }
   if (mergedRows > 0) {
     notes.push(

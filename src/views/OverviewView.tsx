@@ -97,7 +97,9 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
     {
       key: 'owner',
       header: 'เป็นของ',
-      render: (r) => <span className={`badge ${r.owner === 'target' ? 'accent' : 'warn'}`}>{r.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย'}</span>,
+      render: (r) => (
+        <span className={`badge ${r.owner === 'target' ? 'accent' : 'warn'}`}>{r.owner === 'target' ? 'เป้าหมาย' : r.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย'}</span>
+      ),
       sortValue: (r) => (r.owner === 'target' ? 0 : 1),
       csv: (r) => (r.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย'),
     },
@@ -107,6 +109,12 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
       render: (r) => (r.number && r.number !== r.ds.target ? <NumberLink peer={r.number} /> : <span className="mono">{r.number ?? '-'}</span>),
       sortValue: (r) => r.number,
       csv: (r) => r.number ?? '',
+    },
+    {
+      key: 'imei',
+      header: 'IMEI ที่ใช้กับซิมนี้',
+      render: (r) => (r.imeis.length ? <span className="mono small">{r.imeis.slice(0, 3).join(', ') + (r.imeis.length > 3 ? ` +${r.imeis.length - 3}` : '')}</span> : '-'),
+      csv: (r) => r.imeis.join(' '),
     },
     { key: 'rows', header: 'แถว', num: true, render: (r) => fmtInt(r.rows), sortValue: (r) => r.rows, csv: (r) => r.rows },
     { key: 'cell', header: 'มีพิกัด', num: true, render: (r) => fmtInt(r.withCell), sortValue: (r) => r.withCell, csv: (r) => r.withCell },
@@ -129,7 +137,8 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
       <div style={{ marginTop: 8 }}>
         <Caveat>
           แผนที่ เสาที่ใช้บ่อย พื้นที่ที่อาจเป็นที่พัก และเส้นทาง ใช้เฉพาะพิกัดของแถวที่เป็นของเป้าหมาย พิกัดของคู่สายแสดงแยกในคอลัมน์ "เสาของคู่สาย" (แท็บรายการข้อมูล)
-          และในหน้ารายละเอียดของเลขนั้น · เลขหนึ่งใช้ซิมได้ทีละใบ ซิมที่อยู่ฝั่งเป้าหมายแต่ใช้ทับช่วงเวลากับซิมของเป้าหมายจึงไม่ถูกนับเป็นของเป้าหมาย
+          และในหน้ารายละเอียดของเลขนั้น · IMEI ในแถวของคู่สายเป็นเครื่องของคู่สาย ไม่ถูกนับเป็นเครื่องของเป้าหมาย · ถือว่าเป้าหมายมีซิมเดียว
+          ซิมอื่นนับเป็นของเป้าหมายเฉพาะเมื่อใช้ไม่ทับช่วงเวลาและใช้ในเครื่องเดียวกับซิมของเป้าหมาย (เปลี่ยนซิม)
         </Caveat>
       </div>
     </Section>

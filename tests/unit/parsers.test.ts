@@ -113,20 +113,26 @@ describe('DTAC multi-sheet layout', () => {
     expect(check.filter((x) => x.owner === 'peer').reduce((n, x) => n + x.rows, 0)).toBe(rows);
   });
 
-  it('keeps a SIM change as the target, and peers as peers, without a DATA sheet', () => {
-    const OLD = '520050000000303';
-    const NEW = '520050000009999';
-    // Drop the DATA sheet; from mid-August the target uses a new SIM.
+  const OLD = '520050000000303';
+  const NEW = '520050000009999';
+  /** Sample C without its DATA sheet; from mid-August the target's rows carry another SIM (and optionally another IMEI). */
+  function simChange(newImei?: string) {
     const sheets = wbC.sheets
       .filter((sh) => !/^DATA/.test(sh.name))
       .map((sh) => {
         const head = sh.rows[0] ?? [];
         const ti = head.findIndex((h) => /START TIME|Acct-Start-Time/i.test(String(h)));
         const ii = head.findIndex((h) => String(h).toUpperCase() === 'IMSI');
+        const ei = head.findIndex((h) => String(h).toUpperCase() === 'IMEI');
         if (ti < 0 || ii < 0) return sh;
-        return { ...sh, rows: sh.rows.map((r, k) => (k > 0 && r[ii] === OLD && String(r[ti]) >= '2026-08-15' ? r.map((v, j) => (j === ii ? NEW : v)) : r)) };
+        const swap = (r: (string | null)[]) => r.map((v, j) => (j === ii ? NEW : j === ei && newImei ? newImei : v));
+        return { ...sh, rows: sh.rows.map((r, k) => (k > 0 && r[ii] === OLD && String(r[ti]) >= '2026-08-15' ? swap(r) : r)) };
       });
-    const [d] = drafts(parseWorkbook({ ...wbC, sheets }, 'local'));
+    return drafts(parseWorkbook({ ...wbC, sheets }, 'local'))[0];
+  }
+
+  it('keeps a SIM change in the same handset as the target, and peers as peers, without a DATA sheet', () => {
+    const d = simChange();
     expect(new Set(d.meta.targetImsis)).toEqual(new Set([OLD, NEW]));
     const check = d.meta.imsiCheck!;
     expect(check.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'target', basis: 'sim-change' });
@@ -136,6 +142,24 @@ describe('DTAC multi-sheet layout', () => {
     expect(d.interactions.filter((i) => i.targetObs?.cell).length).toBe(before);
     expect(d.interactions.some((i) => i.peerObs?.imsi === NEW || i.peerObs?.imsi === OLD)).toBe(false);
     expect(d.meta.notes.some((n) => n.includes('มากกว่า 1 ใบ'))).toBe(true);
+  });
+
+  it('treats the target as having one SIM: a new SIM in another handset stays a peer, flagged for review', () => {
+    const d = simChange('35000000999999');
+    expect(d.meta.targetImsis).toEqual([OLD]);
+    expect(d.meta.imsiCheck!.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'peer', basis: 'review', imeis: ['35000000999999'] });
+    // Neither its positions nor its handset are counted as the target's.
+    expect(d.interactions.some((i) => i.targetObs?.imsi === NEW || i.targetObs?.imei === '35000000999999')).toBe(false);
+    expect(d.meta.notes.some((n) => n.includes('ควรตรวจสอบ'))).toBe(true);
+  });
+
+  it('never puts a peer handset (IMEI) among the target devices', () => {
+    const peerImeis = new Set(c.interactions.map((i) => i.peerObs?.imei).filter(Boolean));
+    const targetImeis = new Set(c.interactions.map((i) => i.targetObs?.imei).filter(Boolean));
+    expect(peerImeis.size).toBeGreaterThan(0);
+    for (const e of peerImeis) expect(targetImeis.has(e)).toBe(false);
+    const sims = c.meta.imsiCheck!.filter((x) => x.owner === 'peer' && x.imeis.length);
+    for (const p of sims) for (const e of p.imeis) expect([...targetImeis].some((t) => String(t).startsWith(e))).toBe(false);
   });
 
   it('marks calls without duration as unanswered', () => {
