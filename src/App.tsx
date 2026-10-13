@@ -6,6 +6,7 @@ import { ColumnMappingDialog, Toasts } from './components/Dialogs';
 import { ProfileDialog } from './components/ProfileDialog';
 import { DatasetList, ImportPanel, ProfilePanel, SettingsPanel } from './components/Sidebar';
 import { downloadBlob } from './components/download';
+import { BurstView } from './views/BurstView';
 import { ContactsView } from './views/ContactsView';
 import { CrossView } from './views/CrossView';
 import { DevicesView } from './views/DevicesView';
@@ -20,6 +21,7 @@ const TABS = [
   { id: 'overview', label: 'ภาพรวม', View: OverviewView },
   { id: 'contacts', label: 'คู่ติดต่อ', View: ContactsView },
   { id: 'timeline', label: 'ช่วงเวลา', View: TimelineView },
+  { id: 'bursts', label: 'Call burst', View: BurstView },
   { id: 'locations', label: 'พื้นที่และการเดินทาง', View: LocationsView },
   { id: 'devices', label: 'อุปกรณ์', View: DevicesView },
   { id: 'network', label: 'ผังเครือข่าย', View: NetworkView },

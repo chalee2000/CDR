@@ -1,7 +1,7 @@
 import { activeInteractions, isComm } from '../dataset';
 import { periodOfHour } from '../labels';
 import { isPersonKind } from '../phone';
-import { DAY, dayKey, hourOf, MINUTE, HOUR, startOfDay, weekdayMon0 } from '../time';
+import { DAY, dayKey, hourOf, HOUR, startOfDay, weekdayMon0 } from '../time';
 import type { Dataset, Settings } from '../types';
 import { siteLabelOf } from './locations';
 
@@ -115,33 +115,7 @@ export function silences(ds: Dataset, settings: Settings): Gap[] {
   return out.sort((a, b) => b.hours - a.hours);
 }
 
-export interface Burst {
-  from: number;
-  to: number;
-  count: number;
-  peers: string[];
-}
-
-/** Windows with >= burstCount person calls/SMS inside burstMinutes (merged when overlapping). */
-export function bursts(ds: Dataset, settings: Settings): Burst[] {
-  const events = activeInteractions(ds, settings)
-    .filter((i) => isComm(i) && isPersonKind(i.peerKind))
-    .sort((a, b) => a.ts - b.ts);
-  const win = settings.burstMinutes * MINUTE;
-  const spans: [number, number][] = [];
-  let j = 0;
-  for (let i = 0; i < events.length; i++) {
-    while (events[i].ts - events[j].ts > win) j++;
-    if (i - j + 1 < settings.burstCount) continue;
-    const last = spans[spans.length - 1];
-    if (last && j <= last[1]) last[1] = i;
-    else spans.push([j, i]);
-  }
-  return spans.map(([a, b]) => {
-    const slice = events.slice(a, b + 1);
-    return { from: slice[0].ts, to: slice[slice.length - 1].ts, count: slice.length, peers: [...new Set(slice.map((e) => e.peer!))] };
-  });
-}
+// Call bursts live in ./bursts.ts (their own tab).
 
 export interface DayRhythm {
   day: string;

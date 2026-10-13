@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as echarts from 'echarts/core';
-import { BarChart, GraphChart, HeatmapChart, LineChart } from 'echarts/charts';
-import { DataZoomComponent, GridComponent, TooltipComponent, VisualMapComponent } from 'echarts/components';
+import { BarChart, GraphChart, HeatmapChart, LineChart, ScatterChart } from 'echarts/charts';
+import { DataZoomComponent, GridComponent, MarkAreaComponent, TooltipComponent, VisualMapComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption, ECharts } from 'echarts/core';
 import { CHROME, type ThemeMode } from '../lib/palette';
 import { escapeHtml } from './download';
 
-echarts.use([BarChart, LineChart, HeatmapChart, GraphChart, GridComponent, TooltipComponent, VisualMapComponent, DataZoomComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, HeatmapChart, GraphChart, ScatterChart, GridComponent, TooltipComponent, VisualMapComponent, DataZoomComponent, MarkAreaComponent, CanvasRenderer]);
 
 interface Props {
   option: EChartsCoreOption;

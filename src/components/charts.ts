@@ -1,7 +1,10 @@
+import type { CallBurst } from '../lib/analysis/bursts';
 import type { DayRow, HourProfile } from '../lib/analysis/temporal';
 import { WEEKDAYS_TH } from '../lib/labels';
 import { slotColor, SEQUENTIAL_BLUE, type ThemeMode } from '../lib/palette';
+import { DAY, dayKey, fmtTime, startOfDay } from '../lib/time';
 import { chrome, tooltipRows } from './Chart';
+import { escapeHtml } from './download';
 
 // Series identity is fixed across every chart: slot 1 = โทรออก, 2 = โทรเข้า, 3 = SMS.
 export const SERIES = [
@@ -117,6 +120,109 @@ export function singleHourOption(hours: number[], mode: ThemeMode, name: string)
     xAxis: { type: 'category', data: hours.map((_, h) => String(h).padStart(2, '0')), ...ch.categoryAxis },
     yAxis: { type: 'value', minInterval: 1, ...ch.valueAxis },
     series: [{ name, type: 'bar', data: hours, barMaxWidth: 24, itemStyle: { color: slotColor(0, mode), borderRadius: [4, 4, 0, 0] } }],
+  };
+}
+
+const hourText = (h: number) => `${String(Math.floor(h)).padStart(2, '0')}:00`;
+
+/**
+ * Call bursts on a day x time-of-day plane: one dot per burst, area by size,
+ * colour by target. Night hours sit on a recessive band, so bursts that keep
+ * recurring at the same hour (or at night) stand out.
+ */
+export function burstOption(
+  bursts: CallBurst[],
+  targets: { id: string; slot: number; target: string; label: string }[],
+  range: [number, number],
+  mode: ThemeMode,
+  night: { start: number; end: number },
+) {
+  const ch = chrome(mode);
+  const first = startOfDay(range[0]);
+  const days: string[] = [];
+  for (let t = first; t <= startOfDay(range[1]); t += DAY) days.push(dayKey(t));
+  const maxCount = Math.max(1, ...bursts.map((b) => b.count));
+  const hourFloat = (ts: number) => (ts - startOfDay(ts)) / 3_600_000;
+  const band = mode === 'light' ? 'rgba(11,11,11,0.045)' : 'rgba(255,255,255,0.05)';
+  // Bursts on the same day within ~1.5 h of each other sit side by side
+  // (pixel offsets), so same-night bursts of two targets never hide each other.
+  const dayOf = (b: CallBurst) => Math.round((startOfDay(b.from) - first) / DAY);
+  const offset = new Map<string, number>();
+  const byDay = new Map<number, CallBurst[]>();
+  for (const b of bursts) byDay.set(dayOf(b), [...(byDay.get(dayOf(b)) ?? []), b]);
+  for (const list of byDay.values()) {
+    list.sort((x, y) => x.from - y.from);
+    let group: CallBurst[] = [];
+    const flush = () => group.forEach((b, k) => offset.set(b.id, (k - (group.length - 1) / 2) * 16));
+    for (const b of list) {
+      if (group.length && hourFloat(b.from) - hourFloat(group[group.length - 1].from) > 1.5) {
+        flush();
+        group = [];
+      }
+      group.push(b);
+    }
+    flush();
+  }
+  const series = targets.map((t, i) => ({
+    name: t.label,
+    type: 'scatter',
+    data: bursts
+      .filter((b) => b.datasetId === t.id)
+      .map((b) => ({ value: [dayOf(b), hourFloat(b.from), b.count, b.id], symbolOffset: [offset.get(b.id) ?? 0, 0] })),
+    symbolSize: (v: number[]) => 9 + 21 * Math.sqrt(v[2] / maxCount),
+    itemStyle: { color: slotColor(t.slot, mode), opacity: 0.85, borderColor: ch.surface, borderWidth: 1.5 },
+    emphasis: { scale: 1.25, itemStyle: { opacity: 1 } },
+    // Night shading once, under the dots.
+    markArea:
+      i === 0
+        ? {
+            silent: true,
+            itemStyle: { color: band },
+            data:
+              night.start > night.end
+                ? [
+                    [{ yAxis: night.start }, { yAxis: 24 }],
+                    [{ yAxis: 0 }, { yAxis: night.end }],
+                  ]
+                : [[{ yAxis: night.start }, { yAxis: night.end }]],
+          }
+        : undefined,
+  }));
+  const byId = new Map(bursts.map((b) => [b.id, b]));
+  const nameOf = new Map(targets.map((t) => [t.id, t.label]));
+  return {
+    textStyle: ch.textStyle,
+    grid: { ...ch.grid, top: 10, bottom: days.length > 45 ? 34 : 8 },
+    tooltip: {
+      ...ch.tooltip,
+      trigger: 'item',
+      formatter: (p: { value: [number, number, number, string]; color: string }) => {
+        const b = byId.get(p.value[3]);
+        if (!b) return '';
+        const peers = b.peers
+          .slice(0, 4)
+          .map((x) => `${escapeHtml(x.peer)} ×${x.count}`)
+          .join(', ');
+        return (
+          tooltipRows(`${nameOf.get(b.datasetId) ?? b.target} · ${b.from ? `${dayKey(b.from).slice(8, 10)}/${dayKey(b.from).slice(5, 7)}/${dayKey(b.from).slice(0, 4)}` : ''} ${fmtTime(b.from)}–${fmtTime(b.to)}`, [
+            { color: p.color, name: 'ครั้งในช่วงนี้', value: b.count.toLocaleString('th-TH') },
+          ]) +
+          `<div style="margin-top:3px;opacity:.8">โทรออก ${b.callsOut} · โทรเข้า ${b.callsIn} · SMS ${b.sms}</div><div style="opacity:.8;max-width:300px;white-space:normal">${peers}${b.peers.length > 4 ? ' …' : ''}</div>`
+        );
+      },
+    },
+    xAxis: { type: 'category', data: days.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`), boundaryGap: true, ...ch.categoryAxis },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 24,
+      interval: 3,
+      inverse: true,
+      ...ch.valueAxis,
+      axisLabel: { ...ch.valueAxis.axisLabel, formatter: (v: number) => hourText(v) },
+    },
+    dataZoom: days.length > 45 ? [{ type: 'inside', xAxisIndex: 0 }, { type: 'slider', xAxisIndex: 0, height: 16, bottom: 4, borderColor: 'transparent', textStyle: { color: ch.muted } }] : [],
+    series,
   };
 }
 

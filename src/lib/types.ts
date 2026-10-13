@@ -120,6 +120,8 @@ export interface Settings {
   silenceHours: number;
   burstCount: number;
   burstMinutes: number;
+  /** Count SMS as well as calls when looking for call bursts. */
+  burstSms: boolean;
   yearStyle: 'ce' | 'be';
   showBasemap: boolean;
 }
@@ -136,6 +138,7 @@ export const DEFAULT_SETTINGS: Settings = {
   silenceHours: 24,
   burstCount: 5,
   burstMinutes: 10,
+  burstSms: true,
   yearStyle: 'ce',
   showBasemap: true,
 };

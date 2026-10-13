@@ -3,14 +3,15 @@ import readXlsxFile from 'read-excel-file/universal';
 import { buildDataset } from '../../src/lib/dataset';
 import { parseWorkbook } from '../../src/lib/parsers';
 import { generateSamples, SAMPLE_TARGETS } from '../../src/lib/samples/generate';
-import { DEFAULT_SETTINGS, type Dataset } from '../../src/lib/types';
+import { DEFAULT_SETTINGS, type Dataset, type Interaction } from '../../src/lib/types';
 import { contactStats } from '../../src/lib/analysis/contacts';
 import { coLocations, commonContacts, directLinks, relayChains, sharedDevices } from '../../src/lib/analysis/cross';
 import { deviceStats } from '../../src/lib/analysis/devices';
 import { CoordResolver, homeWorkCandidates, siteStats, stays } from '../../src/lib/analysis/locations';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, egoNetwork } from '../../src/lib/analysis/network';
 import { summarize } from '../../src/lib/analysis/summary';
-import { bursts, dailySeries, hourProfile, silences } from '../../src/lib/analysis/temporal';
+import { dailySeries, hourProfile, silences } from '../../src/lib/analysis/temporal';
+import { allBursts, burstNetwork, burstPeers, findBursts, simultaneousBursts } from '../../src/lib/analysis/bursts';
 import { analysisTables, exportAnalysisXlsx } from '../../src/lib/export/excel';
 import { toCsv } from '../../src/lib/export/csv';
 import { dayKey } from '../../src/lib/time';
@@ -53,8 +54,6 @@ describe('per-target analysis', () => {
     expect(gaps[0].hours).toBeGreaterThan(74);
     expect(dayKey(gaps[0].from) <= '2026-08-10').toBe(true);
     expect(dayKey(gaps[0].to) >= '2026-08-13').toBe(true);
-    const b = bursts(B, settings);
-    expect(b.some((x) => dayKey(x.from) === '2026-08-05' && x.count >= 6)).toBe(true);
     const days = dailySeries(C, settings);
     expect(days).toHaveLength(62);
     const prof = hourProfile(A, settings);
@@ -161,6 +160,63 @@ describe('cross-target analysis', () => {
   });
 });
 
+describe('call bursts', () => {
+  it("finds B's late-night burst with its parties, night flag and place", () => {
+    const b = findBursts(B, settings).find((x) => dayKey(x.from) === '2026-08-05')!;
+    expect(b.count).toBeGreaterThanOrEqual(6);
+    expect(b.night).toBe(true);
+    expect(b.peers.length).toBeGreaterThanOrEqual(6);
+    expect(b.peers.reduce((s, p) => s + p.count, 0)).toBe(b.count);
+    expect(b.callsOut + b.callsIn + b.sms).toBe(b.count);
+    expect(b.topSite).toBeTruthy();
+    expect(b.minutes).toBeLessThanOrEqual(settings.burstMinutes * 2);
+  });
+
+  it('respects the threshold and the calls-only switch', () => {
+    const all = allBursts(datasets, settings);
+    expect(all.every((b) => b.count >= settings.burstCount)).toBe(true);
+    const callsOnly = allBursts(datasets, { ...settings, burstSms: false });
+    expect(callsOnly.every((b) => b.sms === 0)).toBe(true);
+    expect(callsOnly.reduce((s, b) => s + b.count, 0)).toBeLessThanOrEqual(all.reduce((s, b) => s + b.count, 0));
+    const stricter = allBursts(datasets, { ...settings, burstCount: settings.burstCount + 3 });
+    expect(stricter.length).toBeLessThanOrEqual(all.length);
+  });
+
+  it('counts a multi-part SMS once', () => {
+    const t0 = Date.UTC(2026, 6, 10, 9, 0);
+    const sms = (k: number, peer: string, sec: number) =>
+      ({ id: `s${k}`, ts: t0 + sec * 1000, service: 'sms', direction: 'in', peer, peerKind: 'mobile', rawType: 'SMS-MT', source: 'SMS', rowRefs: [] }) as unknown as Interaction;
+    // A long message in 8 parts seconds apart, then 4 short messages from others.
+    const parts = Array.from({ length: 8 }, (_, k) => sms(k, '0900000001', k * 2));
+    const others = [1, 2, 3, 4].map((k) => sms(10 + k, `090000001${k}`, 60 + k * 30));
+    const ds = { id: 'x', target: '0800000000', slot: 0, label: 'x', interactions: [...parts, ...others] } as unknown as Dataset;
+    const found = findBursts(ds, settings);
+    expect(found).toHaveLength(1);
+    expect(found[0].count).toBe(5);
+    expect(found[0].peers.find((p) => p.peer === '0900000001')!.count).toBe(1);
+  });
+
+  it('pairs bursts of different targets in the same window', () => {
+    const pairs = simultaneousBursts(allBursts(datasets, settings), settings.burstMinutes);
+    const ab = pairs.find((p) => [p.a.target, p.b.target].sort().join() === [SAMPLE_TARGETS.A, SAMPLE_TARGETS.B].sort().join() && dayKey(p.a.from) === '2026-08-05');
+    expect(ab).toBeDefined();
+    expect(ab!.overlapMin).toBeGreaterThan(0);
+    expect(pairs.every((p) => p.a.datasetId !== p.b.datasetId)).toBe(true);
+  });
+
+  it('summarises recurring parties and draws one burst as a small network', () => {
+    const bs = allBursts(datasets, settings);
+    const peers = burstPeers(bs);
+    expect(peers.reduce((s, p) => s + p.events, 0)).toBe(bs.reduce((s, b) => s + b.count, 0));
+    const b = findBursts(A, settings).find((x) => dayKey(x.from) === '2026-08-05')!;
+    expect(b.peers.find((p) => p.peer === '0860000111')!.count).toBe(3);
+    const net = burstNetwork(b, datasets);
+    expect(net.nodes).toHaveLength(b.peers.length + 1);
+    expect(net.edges.reduce((s, e) => s + e.ab + e.ba, 0)).toBe(b.callsOut + b.callsIn + b.sms);
+    expect(net.edges.reduce((s, e) => s + e.events, 0)).toBe(b.count);
+  });
+});
+
 describe('exports', () => {
   it('produces every table and a readable workbook', async () => {
     const tables = analysisTables(datasets, settings);
@@ -169,6 +225,7 @@ describe('exports', () => {
     const blob = await exportAnalysisXlsx(datasets, settings);
     const sheets = await readXlsxFile(await blob.arrayBuffer());
     expect(sheets.map((s) => s.sheet)).toContain('สรุป');
+    expect(sheets.map((s) => s.sheet)).toEqual(expect.arrayContaining(['การติดต่อถี่', 'ติดต่อถี่พร้อมกัน']));
     expect(sheets.find((s) => s.sheet === 'สรุป')!.data).toHaveLength(4);
   });
 

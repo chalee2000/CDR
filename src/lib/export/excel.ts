@@ -4,6 +4,7 @@ import { activeInteractions, datasetName } from '../dataset';
 import { PEER_KIND_TH, SOURCE_TH, interactionLabel } from '../labels';
 import { isoText } from '../time';
 import type { Dataset, Settings } from '../types';
+import { allBursts, simultaneousBursts, type CallBurst } from '../analysis/bursts';
 import { contactStats } from '../analysis/contacts';
 import { coLocations, commonContacts, directLinks, relayChains, sharedDevices } from '../analysis/cross';
 import { deviceStats } from '../analysis/devices';
@@ -83,6 +84,22 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
     header: ['ผ่านคู่ติดต่อ', 'เป้าหมายที่ 1', 'เวลา 1', 'รายการ 1', 'เป้าหมายที่ 2', 'เวลา 2', 'รายการ 2', 'ห่างกัน (นาที)', 'ทิศทางต่อเนื่อง'],
     rows: relayChains(datasets, settings).map((r) => [r.via, r.first.target, isoText(r.first.ts), r.first.label, r.second.target, isoText(r.second.ts), r.second.label, Math.round(r.gapMin * 10) / 10, r.flow ? 'ใช่' : '']),
   });
+
+  const bursts = allBursts(datasets, settings);
+  const peerList = (b: CallBurst) => b.peers.map((p) => `${p.peer}${nameOf(p.peer) ? ` (${nameOf(p.peer)})` : ''} ×${p.count}`).join(', ');
+  tables.push({
+    sheet: 'การติดต่อถี่',
+    header: ['เป้าหมาย', 'เริ่ม', 'สิ้นสุด', 'นาที', 'จำนวนครั้ง', 'โทรออก', 'โทรเข้า', 'SMS', 'เวลาสนทนา (วินาที)', 'จำนวนคู่ติดต่อ', 'คู่ติดต่อ (ครั้ง)', 'เสาที่ปรากฏมาก', 'กลางคืน', 'เกณฑ์'],
+    rows: bursts.map((b) => [b.target, isoText(b.from), isoText(b.to), Math.round(b.minutes * 10) / 10, b.count, b.callsOut, b.callsIn, b.sms, b.talkSec, b.peers.length, peerList(b), text(b.topSite), b.night ? 'ใช่' : '', `≥${settings.burstCount} ครั้ง/${settings.burstMinutes} นาที ${settings.burstSms ? 'โทร+SMS' : 'เฉพาะโทร'}`]),
+  });
+  const together = simultaneousBursts(bursts, settings.burstMinutes);
+  if (together.length) {
+    tables.push({
+      sheet: 'ติดต่อถี่พร้อมกัน',
+      header: ['เป้าหมาย 1', 'เริ่ม 1', 'สิ้นสุด 1', 'ครั้ง 1', 'เป้าหมาย 2', 'เริ่ม 2', 'สิ้นสุด 2', 'ครั้ง 2', 'ซ้อนกัน (นาที)', 'ห่างกัน (นาที)', 'คู่ติดต่อร่วม', 'ติดต่อกันเอง'],
+      rows: together.map((p) => [p.a.target, isoText(p.a.from), isoText(p.a.to), p.a.count, p.b.target, isoText(p.b.from), isoText(p.b.to), p.b.count, Math.round(p.overlapMin * 10) / 10, Math.round(p.gapMin * 10) / 10, p.sharedPeers.join(', '), p.direct ? 'ใช่' : '']),
+    });
+  }
 
   tables.push({
     sheet: 'อยู่พื้นที่เดียวกัน',

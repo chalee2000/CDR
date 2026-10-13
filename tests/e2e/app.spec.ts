@@ -7,7 +7,7 @@ import { expect, test, type Page } from '@playwright/test';
 // loads real exports (local verification only — never commit those files).
 const APP = 'file://' + resolve('dist/index.html');
 const SHOT_DIR = process.env.SHOT_DIR;
-const TABS = ['ภาพรวม', 'คู่ติดต่อ', 'ช่วงเวลา', 'พื้นที่และการเดินทาง', 'อุปกรณ์', 'ผังเครือข่าย', 'เชื่อมโยงข้ามเป้าหมาย', 'รายการข้อมูล'];
+const TABS = ['ภาพรวม', 'คู่ติดต่อ', 'ช่วงเวลา', 'Call burst', 'พื้นที่และการเดินทาง', 'อุปกรณ์', 'ผังเครือข่าย', 'เชื่อมโยงข้ามเป้าหมาย', 'รายการข้อมูล'];
 
 function watchErrors(page: Page): string[] {
   const errors: string[] = [];
@@ -145,6 +145,33 @@ test('link chart: search, details and a person profile saved to and opened from 
 
   await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');
   await expect(page.getByRole('img', { name: /^ผังผู้ติดต่อร่วม/ })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('call burst tab: bursts, burst details and bursts of several targets at once', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(APP);
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  await openTab(page, 'Call burst');
+  const table = page.getByRole('table', { name: 'รายการช่วงติดต่อถี่' });
+  await expect(table).toBeVisible();
+  await expect(page.getByRole('img', { name: /^กราฟเวลาที่เกิดการติดต่อถี่/ })).toBeVisible();
+
+  // B's late-night burst on 2026-08-05: six calls in eight minutes.
+  const row = table.getByRole('row').filter({ hasText: '05/08/2026' }).filter({ hasText: '0820000202' });
+  await row.getByRole('button', { name: 'ดูรายละเอียด' }).click();
+  const detail = page.getByRole('region', { name: 'รายละเอียดช่วงติดต่อถี่' });
+  await expect(detail.getByRole('img', { name: /^ผังการติดต่อในช่วง/ })).toBeVisible();
+  expect(await detail.getByRole('table', { name: 'รายการในช่วงติดต่อถี่' }).getByRole('row').count()).toBeGreaterThanOrEqual(7);
+
+  // A bursts the same night: listed as a candidate of simultaneous activity.
+  const together = page.getByRole('table', { name: 'ติดต่อถี่พร้อมกัน' });
+  await expect(together).toContainText('0810000101');
+  await expect(together).toContainText('0820000202');
+  await shot(page, '11-call-burst');
+
+  await page.getByRole('group', { name: 'สิ่งที่นับ' }).getByRole('button', { name: 'เฉพาะการโทร' }).click();
+  await expect(table).toBeVisible();
   expect(errors).toEqual([]);
 });
 

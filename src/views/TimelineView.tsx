@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
-import { bursts, dailyRhythm, dailySeries, hourProfile, silences, type Burst, type DayRhythm, type Gap } from '../lib/analysis/temporal';
+import { dailyRhythm, dailySeries, hourProfile, silences, type DayRhythm, type Gap } from '../lib/analysis/temporal';
 import { DAY_PERIODS, WEEKDAYS_TH } from '../lib/labels';
 import { fmtDate, fmtDateTime, fmtHours, fmtTime, HOUR, isoText } from '../lib/time';
 import { fmtInt, pct } from '../lib/util';
 import { ChartCard, EChart } from '../components/Chart';
 import { dailyOption, dataVolumeOption, heatOption, hourOption, seriesLegend } from '../components/charts';
 import { DataTable, type Column } from '../components/DataTable';
-import { Caveat, DatasetPicker, Kpi, NumberLink, Section } from '../components/bits';
+import { Caveat, DatasetPicker, Kpi, Section } from '../components/bits';
 import { useEffectiveTheme, useStore } from '../state/store';
 
 export function TimelineView() {
@@ -15,7 +15,6 @@ export function TimelineView() {
   const days = useMemo(() => (ds ? dailySeries(ds, settings) : []), [ds, settings]);
   const prof = useMemo(() => (ds ? hourProfile(ds, settings) : undefined), [ds, settings]);
   const gaps = useMemo(() => (ds ? silences(ds, settings) : []), [ds, settings]);
-  const bursty = useMemo(() => (ds ? bursts(ds, settings) : []), [ds, settings]);
   const rhythm = useMemo(() => (ds ? dailyRhythm(ds, settings) : []), [ds, settings]);
   const dOpt = useMemo(() => dailyOption(days, mode), [days, mode]);
   const vOpt = useMemo(() => dataVolumeOption(days, mode), [days, mode]);
@@ -30,23 +29,6 @@ export function TimelineView() {
     { key: 'from', header: 'ตั้งแต่ (รายการสุดท้ายก่อนเงียบ)', render: (g) => fmtDateTime(g.from, y), sortValue: (g) => g.from, csv: (g) => isoText(g.from) },
     { key: 'to', header: 'ถึง (รายการแรกหลังเงียบ)', render: (g) => fmtDateTime(g.to, y), sortValue: (g) => g.to, csv: (g) => isoText(g.to) },
     { key: 'h', header: 'ระยะเวลา', num: true, render: (g) => fmtHours(g.hours * HOUR), sortValue: (g) => g.hours },
-  ];
-  const burstCols: Column<Burst>[] = [
-    { key: 'from', header: 'เริ่ม', render: (b) => fmtDateTime(b.from, y), sortValue: (b) => b.from, csv: (b) => isoText(b.from) },
-    { key: 'to', header: 'สิ้นสุด', render: (b) => fmtTime(b.to), sortValue: (b) => b.to, csv: (b) => isoText(b.to) },
-    { key: 'n', header: 'จำนวนครั้ง', num: true, render: (b) => fmtInt(b.count), sortValue: (b) => b.count },
-    {
-      key: 'peers',
-      header: 'คู่ติดต่อ',
-      render: (b) => (
-        <span style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px' }}>
-          {b.peers.map((p) => (
-            <NumberLink key={p} peer={p} />
-          ))}
-        </span>
-      ),
-      csv: (b) => b.peers.join(' '),
-    },
   ];
   const rhythmCols: Column<DayRhythm>[] = [
     { key: 'day', header: 'วันที่', render: (r) => `${fmtDate(Date.parse(r.day), y)}`, sortValue: (r) => r.day },
@@ -97,14 +79,9 @@ export function TimelineView() {
           ))}
         </div>
       </Section>
-      <div className="grid two">
-        <Section title={`ช่วงที่ไม่มีรายการใด ๆ ≥ ${settings.silenceHours} ชม.`} sub="อาจเกิดจากปิดเครื่อง อยู่นอกพื้นที่ให้บริการ หรือใช้เครื่อง/ซิมอื่น">
-          <DataTable label="ช่วงเงียบ" rows={gaps} columns={gapCols} initialSort={{ key: 'h', dir: 'desc' }} pageSize={10} empty="ไม่พบช่วงเงียบตามเกณฑ์" csvName={`silence-${ds.target}`} />
-        </Section>
-        <Section title={`การติดต่อถี่ (≥ ${settings.burstCount} ครั้งใน ${settings.burstMinutes} นาที)`} sub="นับเฉพาะเลขหมายบุคคล">
-          <DataTable label="การติดต่อถี่" rows={bursty} columns={burstCols} initialSort={{ key: 'from', dir: 'asc' }} pageSize={10} empty="ไม่พบช่วงที่ติดต่อถี่ตามเกณฑ์" csvName={`bursts-${ds.target}`} />
-        </Section>
-      </div>
+      <Section title={`ช่วงที่ไม่มีรายการใด ๆ ≥ ${settings.silenceHours} ชม.`} sub="อาจเกิดจากปิดเครื่อง อยู่นอกพื้นที่ให้บริการ หรือใช้เครื่อง/ซิมอื่น · ช่วงที่ติดต่อถี่ดูได้ที่แท็บ Call burst">
+        <DataTable label="ช่วงเงียบ" rows={gaps} columns={gapCols} initialSort={{ key: 'h', dir: 'desc' }} pageSize={10} empty="ไม่พบช่วงเงียบตามเกณฑ์" csvName={`silence-${ds.target}`} />
+      </Section>
       <Section title="จังหวะการใช้งานรายวัน" sub="เวลารายการแรกและสุดท้ายของแต่ละวัน (รวม data session)">
         <DataTable label="จังหวะรายวัน" rows={rhythm} columns={rhythmCols} initialSort={{ key: 'day', dir: 'asc' }} pageSize={31} csvName={`daily-${ds.target}`} />
         <div style={{ marginTop: 8 }}>

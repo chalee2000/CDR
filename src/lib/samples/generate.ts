@@ -8,7 +8,8 @@ import type { RawSheet, RawWorkbook } from '../types';
  *
  *  A 0810000101 (AIS, Chiang Rai)  — phone change then a dual-SIM handset,
  *                                    Myanmar number behind a 69710 routing
- *                                    prefix, 3-day silence, relays via X1.
+ *                                    prefix, 3-day silence, relays via X1,
+ *                                    a call burst the same night as B's.
  *  B 0820000202 (AIS, Nakhon Sawan) — shares X1 with A and X2 with C, calls C
  *                                    directly, a late-night call burst, trip
  *                                    to Bangkok on 2026-08-20.
@@ -120,6 +121,8 @@ interface AisEvent {
   site: Site;
   imei: string;
   dupes?: number;
+  /** Fixed cell; events with one do not draw from the random stream. */
+  eci?: string;
 }
 
 function aisRows(target: string, imsi: string, events: AisEvent[], rand: () => number): (string | null)[][] {
@@ -127,7 +130,7 @@ function aisRows(target: string, imsi: string, events: AisEvent[], rand: () => n
   events.sort((x, y) => x.ts - y.ts);
   for (const e of events) {
     const call = e.type === 'MOC' || e.type === 'MTC';
-    const eci = e.site.eci[Math.floor(rand() * e.site.eci.length)];
+    const eci = e.eci ?? e.site.eci[Math.floor(rand() * e.site.eci.length)];
     const row = [aisTime(e.ts), call ? aisTime(e.ts + e.dur * 1000) : null, target, e.peer, e.type, String(call ? e.dur : 0), imsi, e.imei, '0', '0', e.site.tac, eci, '52003', e.site.en, e.site.name, e.site.region, e.site.province, e.site.amphur, e.site.tumbol];
     rows.push(row);
     for (let k = 0; k < (e.dupes ?? 0); k++) rows.push([...row]);
@@ -175,6 +178,15 @@ function buildA(rand: () => number, relays: number[]): RawWorkbook {
   }
   // Relay seeds: A calls X1, minutes later X1 calls B (generated in buildB).
   for (const t of relays) push({ ts: t, type: 'MOC', peer: X1, dur: 45 + Math.floor(rand() * 60), site: A_SITES.home });
+  // Call burst on the same night as B's (2026-08-05 22:58–23:07). Fixed values
+  // only, so the random stream (and the rest of the samples) stays the same.
+  const night = BASE + 35 * DAY + 22 * HOUR + 58 * MIN;
+  const home = A_SITES.home.eci[0];
+  push({ ts: night, type: 'MOC', peer: X1, dur: 64, site: A_SITES.home, eci: home });
+  push({ ts: night + 3 * MIN, type: 'MTC', peer: '0870000333', dur: 22, site: A_SITES.home, eci: home });
+  push({ ts: night + 5 * MIN, type: 'MOC', peer: X1, dur: 41, site: A_SITES.home, eci: home });
+  push({ ts: night + 7 * MIN, type: 'MOC', peer: '0890000444', dur: 18, site: A_SITES.home, eci: home });
+  push({ ts: night + 9 * MIN, type: 'MTC', peer: X1, dur: 55, site: A_SITES.home, eci: home });
   return { fileName: 'sample-ais-0810000101.xlsx', sheets: [{ name: 'Sheet1', rows: aisRows(SAMPLE_TARGETS.A, '520030000000101', ev, rand) }] };
 }
 
