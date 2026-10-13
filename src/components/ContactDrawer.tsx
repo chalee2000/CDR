@@ -104,7 +104,7 @@ export function ContactDrawer() {
             ปิด ✕
           </button>
         </header>
-        <Section title="ข้อมูลบุคคล" sub="ผู้ใช้กรอกเอง ไม่ได้มาจากไฟล์ CDR">
+        <Section title="ข้อมูลบุคคล">
           <PersonCard number={peer} profile={profiles[peer]} onEdit={() => openProfileEditor(peer)} />
         </Section>
         {ego && (
