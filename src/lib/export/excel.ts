@@ -1,7 +1,7 @@
 import writeXlsxFile from 'write-excel-file/universal';
 import type { Sheet } from 'write-excel-file/universal';
 import { activeInteractions, datasetName } from '../dataset';
-import { PEER_KIND_TH, SOURCE_TH, interactionLabel } from '../labels';
+import { IMSI_BASIS_TH, PEER_KIND_TH, SOURCE_TH, imsiUseTh, interactionLabel } from '../labels';
 import { isoText } from '../time';
 import type { Dataset, Settings } from '../types';
 import { allBursts, simultaneousBursts, type CallBurst } from '../analysis/bursts';
@@ -142,6 +142,26 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
       sheet: 'ข้อมูลบุคคล',
       header: ['เลขหมาย', 'ชื่อ', 'นามสกุล', 'ชื่อเล่น/ฉายา', 'ที่อยู่', 'ประวัติคดีอาญา', 'จำนวนคดี', 'หมายเหตุ', 'มีรูป', 'แก้ไขล่าสุด', 'ที่มา'],
       rows: people.map((p) => [p.number, text(p.firstName), text(p.lastName), text(p.nickname), text(p.address), recordLines(p).join(' | '), recordLines(p).length, text(p.notes), p.photo ? 'มี' : '', p.updatedAt ? isoText(p.updatedAt) : '', 'ผู้ใช้กรอกเอง (ไม่ได้มาจากไฟล์ CDR)']),
+    });
+  }
+
+  const sims = datasets.flatMap((ds) => (ds.meta.imsiCheck ?? []).map((c) => ({ ds, c })));
+  if (sims.length) {
+    tables.push({
+      sheet: 'ตรวจเจ้าของพิกัด_IMSI',
+      header: ['เป้าหมาย', 'IMSI', 'เป็นของ', 'เลขหมายที่ใช้ซิมนี้', 'แถว', 'แถวที่มีพิกัด', 'ใช้พิกัดเป็น', 'ครั้งแรก', 'ล่าสุด', 'เหตุผล'],
+      rows: sims.map(({ ds, c }) => [
+        ds.target,
+        c.imsi || '(ไม่มี IMSI)',
+        c.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย',
+        text(c.number),
+        c.rows,
+        c.withCell,
+        imsiUseTh(c),
+        isoText(c.firstTs),
+        isoText(c.lastTs),
+        IMSI_BASIS_TH[c.basis],
+      ]),
     });
   }
 

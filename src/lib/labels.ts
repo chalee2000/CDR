@@ -1,4 +1,4 @@
-import type { Direction, Interaction, PeerKind, Service } from './types';
+import type { ImsiCheck, Direction, Interaction, PeerKind, Service } from './types';
 
 export const WEEKDAYS_TH = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
 export const WEEKDAYS_SHORT_TH = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
@@ -64,3 +64,18 @@ export const SOURCE_TH: Record<Interaction['source'], string> = {
   DATA: 'DATA',
   WIFI: 'Wi-Fi',
 };
+
+/** Why a SIM's rows were filed under the target or under a peer (True/DTAC). */
+export const IMSI_BASIS_TH: Record<ImsiCheck['basis'], string> = {
+  data: 'พบในชีต DATA ซึ่งมีเฉพาะการใช้งานของเป้าหมาย',
+  main: 'พบในฝั่งของเป้าหมาย (MO ที่ A เป็นเป้าหมาย / MT ที่ B เป็นเป้าหมาย) มากที่สุด',
+  'sim-change': 'อยู่ฝั่งของเป้าหมาย และใช้ไม่ทับช่วงเวลากับซิมอื่นของเป้าหมาย (เปลี่ยนซิม)',
+  other: 'ไม่ใช่ IMSI ของเป้าหมาย: เป็นขาที่บันทึกจากเครื่องคู่สายซึ่งอยู่เครือข่ายเดียวกัน',
+  role: 'แถวไม่มี IMSI: ตัดสินจากบทบาท MO/MT ของแถว',
+};
+
+/** Where a SIM's cell positions end up in the analysis. */
+export function imsiUseTh(c: Pick<ImsiCheck, 'owner' | 'number'>): string {
+  if (c.owner === 'target') return 'ตำแหน่งของเป้าหมาย';
+  return c.number ? `ตำแหน่งของ ${c.number} (ไม่นับเป็นของเป้าหมาย)` : 'ไม่นับเป็นตำแหน่งของเป้าหมาย';
+}

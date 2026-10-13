@@ -73,6 +73,7 @@ function mergeByTarget(drafts: DatasetDraft[]): DatasetDraft[] {
       sheets: [...cur.meta.sheets, ...d.meta.sheets],
       notes: [...new Set([...cur.meta.notes, ...d.meta.notes])],
       targetImsis: [...new Set([...cur.meta.targetImsis, ...d.meta.targetImsis])],
+      ...(cur.meta.imsiCheck || d.meta.imsiCheck ? { imsiCheck: [...(cur.meta.imsiCheck ?? []), ...(d.meta.imsiCheck ?? [])] } : {}),
       hasCoordinates: cur.meta.hasCoordinates || d.meta.hasCoordinates,
     };
   }

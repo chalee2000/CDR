@@ -95,6 +95,49 @@ describe('DTAC multi-sheet layout', () => {
     }
   });
 
+  it('lists every SIM in the file with its owner and the number using it', () => {
+    const check = c.meta.imsiCheck!;
+    const mine = check.filter((x) => x.owner === 'target');
+    expect(mine.map((x) => [x.imsi, x.basis, x.number])).toEqual([['520050000000303', 'data', SAMPLE_TARGETS.C]]);
+    const peers = check.filter((x) => x.owner === 'peer' && x.imsi && x.number);
+    expect(peers.length).toBeGreaterThan(0);
+    for (const p of peers) {
+      expect(p.number).not.toBe(SAMPLE_TARGETS.C);
+      // Every row of that SIM is the peer's: its positions are filed under the peer.
+      const its = c.interactions.filter((i) => i.peerObs?.imsi === p.imsi);
+      expect(its.length).toBeGreaterThan(0);
+      expect(its.every((i) => i.peer === p.number)).toBe(true);
+      expect(c.interactions.some((i) => i.targetObs?.imsi === p.imsi)).toBe(false);
+    }
+    const rows = c.meta.sheets.filter((st) => st.sheet !== 'DATA service').reduce((n, st) => n + st.peerOwned, 0);
+    expect(check.filter((x) => x.owner === 'peer').reduce((n, x) => n + x.rows, 0)).toBe(rows);
+  });
+
+  it('keeps a SIM change as the target, and peers as peers, without a DATA sheet', () => {
+    const OLD = '520050000000303';
+    const NEW = '520050000009999';
+    // Drop the DATA sheet; from mid-August the target uses a new SIM.
+    const sheets = wbC.sheets
+      .filter((sh) => !/^DATA/.test(sh.name))
+      .map((sh) => {
+        const head = sh.rows[0] ?? [];
+        const ti = head.findIndex((h) => /START TIME|Acct-Start-Time/i.test(String(h)));
+        const ii = head.findIndex((h) => String(h).toUpperCase() === 'IMSI');
+        if (ti < 0 || ii < 0) return sh;
+        return { ...sh, rows: sh.rows.map((r, k) => (k > 0 && r[ii] === OLD && String(r[ti]) >= '2026-08-15' ? r.map((v, j) => (j === ii ? NEW : v)) : r)) };
+      });
+    const [d] = drafts(parseWorkbook({ ...wbC, sheets }, 'local'));
+    expect(new Set(d.meta.targetImsis)).toEqual(new Set([OLD, NEW]));
+    const check = d.meta.imsiCheck!;
+    expect(check.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'target', basis: 'sim-change' });
+    expect(check.find((x) => x.imsi === OLD)).toMatchObject({ owner: 'target', basis: 'main' });
+    // The same rows are the target's as with the original SIMs.
+    const before = c.interactions.filter((i) => i.source !== 'DATA' && i.targetObs?.cell).length;
+    expect(d.interactions.filter((i) => i.targetObs?.cell).length).toBe(before);
+    expect(d.interactions.some((i) => i.peerObs?.imsi === NEW || i.peerObs?.imsi === OLD)).toBe(false);
+    expect(d.meta.notes.some((n) => n.includes('มากกว่า 1 ใบ'))).toBe(true);
+  });
+
   it('marks calls without duration as unanswered', () => {
     const unanswered = c.interactions.filter((i) => i.service === 'call' && i.answered === false);
     expect(unanswered.length).toBeGreaterThan(0);

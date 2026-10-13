@@ -49,6 +49,13 @@ test('sample data: every tab renders without errors', async ({ page }) => {
     await shot(page, `${String(i + 1).padStart(2, '0')}-${name}`);
   }
 
+  // True/DTAC: which SIM wrote each row, and whose positions they are.
+  await openTab(page, 'ภาพรวม');
+  const sims = page.getByRole('table', { name: 'ตรวจเจ้าของพิกัดจาก IMSI' });
+  await expect(sims).toContainText('520050000000303');
+  await expect(sims.getByRole('row').filter({ hasText: '520050000000303' })).toContainText('ตำแหน่งของเป้าหมาย');
+  await expect(sims).toContainText('(ไม่นับเป็นของเป้าหมาย)');
+
   await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');
   await expect(page.getByRole('table', { name: 'ผู้ติดต่อร่วม' }).getByRole('button', { name: '0860000111' })).toBeVisible();
   await expect(page.getByRole('table', { name: 'ผู้ติดต่อร่วม' }).getByRole('button', { name: '0950000222' })).toBeVisible();

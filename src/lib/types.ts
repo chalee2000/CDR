@@ -79,6 +79,25 @@ export interface SheetStat {
   duplicates: number;
 }
 
+/** Whose handset a SIM seen in the file belongs to, and so whose positions its rows carry. */
+export interface ImsiCheck {
+  /** '' for rows without an IMSI (owner taken from the event role). */
+  imsi: string;
+  owner: 'target' | 'peer';
+  /** The number using this SIM: the target, or the party on the handset's side of its events. */
+  number?: string;
+  /**
+   * data: in the DATA sheet (only the target's sessions); main: most often on
+   * the target's side; sim-change: on the target's side, in use only while the
+   * target's other SIMs are not; other: another handset; role: no IMSI.
+   */
+  basis: 'data' | 'main' | 'sim-change' | 'other' | 'role';
+  rows: number;
+  withCell: number;
+  firstTs: number;
+  lastTs: number;
+}
+
 export interface DatasetMeta {
   format: FormatId;
   formatLabel: string;
@@ -86,6 +105,8 @@ export interface DatasetMeta {
   declaredPeriod?: string;
   sheets: SheetStat[];
   targetImsis: string[];
+  /** True/DTAC: every SIM in the file and whether its positions count as the target's. */
+  imsiCheck?: ImsiCheck[];
   /** Data limitations to show next to the analysis (Thai). */
   notes: string[];
   /** How "Z"-suffixed timestamps were interpreted when parsing. */

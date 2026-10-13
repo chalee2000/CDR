@@ -3,10 +3,12 @@ import { contactStats } from '../lib/analysis/contacts';
 import { CoordResolver, homeWorkCandidates, siteStats } from '../lib/analysis/locations';
 import { summarize } from '../lib/analysis/summary';
 import { datasetName } from '../lib/dataset';
+import { IMSI_BASIS_TH, imsiUseTh } from '../lib/labels';
 import { fmtDate, fmtDuration } from '../lib/time';
-import type { Dataset } from '../lib/types';
+import type { Dataset, ImsiCheck } from '../lib/types';
 import { formatBytes, fmtInt, pct } from '../lib/util';
 import { Caveat, Kpi, NumberLink, Section, Swatch } from '../components/bits';
+import { DataTable, type Column } from '../components/DataTable';
 import { useStore } from '../state/store';
 
 function DatasetOverview({ ds }: { ds: Dataset }) {
@@ -81,6 +83,59 @@ function DatasetOverview({ ds }: { ds: Dataset }) {
   );
 }
 
+type SimRow = ImsiCheck & { ds: Dataset; key: string };
+
+/** True/DTAC: every SIM in the file, whose handset it is, and where its positions are counted. */
+function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
+  const { settings } = useStore();
+  const y = settings.yearStyle;
+  const rows: SimRow[] = datasets.flatMap((ds) => (ds.meta.imsiCheck ?? []).map((c, i) => ({ ...c, ds, key: `${ds.id}-${i}` })));
+  if (!rows.length) return null;
+  const columns: Column<SimRow>[] = [
+    { key: 'target', header: 'เป้าหมาย', render: (r) => <span className="mono">{r.ds.target}</span>, sortValue: (r) => r.ds.target, csv: (r) => r.ds.target },
+    { key: 'imsi', header: 'IMSI', render: (r) => (r.imsi ? <span className="mono">{r.imsi}</span> : <span className="muted">(ไม่มี IMSI)</span>), sortValue: (r) => r.imsi, csv: (r) => r.imsi || '(ไม่มี IMSI)' },
+    {
+      key: 'owner',
+      header: 'เป็นของ',
+      render: (r) => <span className={`badge ${r.owner === 'target' ? 'accent' : 'warn'}`}>{r.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย'}</span>,
+      sortValue: (r) => (r.owner === 'target' ? 0 : 1),
+      csv: (r) => (r.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย'),
+    },
+    {
+      key: 'number',
+      header: 'เลขหมายที่ใช้ซิมนี้',
+      render: (r) => (r.number && r.number !== r.ds.target ? <NumberLink peer={r.number} /> : <span className="mono">{r.number ?? '-'}</span>),
+      sortValue: (r) => r.number,
+      csv: (r) => r.number ?? '',
+    },
+    { key: 'rows', header: 'แถว', num: true, render: (r) => fmtInt(r.rows), sortValue: (r) => r.rows, csv: (r) => r.rows },
+    { key: 'cell', header: 'มีพิกัด', num: true, render: (r) => fmtInt(r.withCell), sortValue: (r) => r.withCell, csv: (r) => r.withCell },
+    { key: 'use', header: 'ใช้พิกัดเป็น', render: (r) => imsiUseTh(r), csv: (r) => imsiUseTh(r) },
+    {
+      key: 'period',
+      header: 'ช่วงที่พบ',
+      render: (r) => <span className="nowrap">{r.firstTs === r.lastTs ? fmtDate(r.firstTs, y) : `${fmtDate(r.firstTs, y)} – ${fmtDate(r.lastTs, y)}`}</span>,
+      sortValue: (r) => r.firstTs,
+      csv: (r) => `${fmtDate(r.firstTs, y)} – ${fmtDate(r.lastTs, y)}`,
+    },
+    { key: 'basis', header: 'เหตุผล', render: (r) => <span className="small">{IMSI_BASIS_TH[r.basis]}</span>, csv: (r) => IMSI_BASIS_TH[r.basis] },
+  ];
+  return (
+    <Section
+      title="ตรวจเจ้าของพิกัดจาก IMSI (True/DTAC)"
+      sub="ชีต VOICE / IMS / SMS มีแถวที่บันทึกจากเครื่องของคู่สายด้วยเมื่อคู่สายอยู่เครือข่ายเดียวกัน แถวที่ IMSI ไม่ใช่ของเป้าหมายจึงเป็นพิกัดของคู่สาย ไม่ใช่ของเป้าหมาย"
+    >
+      <DataTable label="ตรวจเจ้าของพิกัดจาก IMSI" rows={rows} columns={columns} pageSize={15} csvName="imsi-owner-check" />
+      <div style={{ marginTop: 8 }}>
+        <Caveat>
+          แผนที่ เสาที่ใช้บ่อย พื้นที่ที่อาจเป็นที่พัก และเส้นทาง ใช้เฉพาะพิกัดของแถวที่เป็นของเป้าหมาย พิกัดของคู่สายแสดงแยกในคอลัมน์ "เสาของคู่สาย" (แท็บรายการข้อมูล)
+          และในหน้ารายละเอียดของเลขนั้น · เลขหนึ่งใช้ซิมได้ทีละใบ ซิมที่อยู่ฝั่งเป้าหมายแต่ใช้ทับช่วงเวลากับซิมของเป้าหมายจึงไม่ถูกนับเป็นของเป้าหมาย
+        </Caveat>
+      </div>
+    </Section>
+  );
+}
+
 export function OverviewView() {
   const { datasets, settings } = useStore();
   return (
@@ -138,6 +193,7 @@ export function OverviewView() {
           </Caveat>
         </div>
       </Section>
+      <ImsiCheckSection datasets={datasets} />
     </>
   );
 }

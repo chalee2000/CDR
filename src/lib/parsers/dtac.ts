@@ -1,4 +1,4 @@
-import type { Cell, Interaction, Observation, RawSheet, RawWorkbook, SheetStat, SourceKind, ZMode } from '../types';
+import type { Cell, ImsiCheck, Interaction, Observation, RawSheet, RawWorkbook, SheetStat, SourceKind, ZMode } from '../types';
 import { normalizeNumber, operatorFromPlmn, type PhoneInfo } from '../phone';
 import { parseWallClock } from '../time';
 import { clean, mode, toNumber } from '../util';
@@ -129,6 +129,37 @@ function cellFrom(row: (string | null)[], col: (n: string) => number): Cell | un
   });
 }
 
+interface SimTally {
+  rows: number;
+  withCell: number;
+  /** DATA-sheet rows. */
+  data: number;
+  /** Communication rows where the SIM sits on the target's side of the event (MO with A = target, MT with B = target). */
+  targetSide: number;
+  peerSide: number;
+  /** Numbers on the SIM's side of its events that are not the target. */
+  numbers: Map<string, number>;
+  firstTs: number;
+  lastTs: number;
+}
+
+const finite = (ts: number) => (Number.isFinite(ts) ? ts : NaN);
+
+function tallySim(sims: Map<string, SimTally>, imsi: string, ts: number, withCell: boolean): SimTally {
+  let t = sims.get(imsi);
+  if (!t) {
+    t = { rows: 0, withCell: 0, data: 0, targetSide: 0, peerSide: 0, numbers: new Map(), firstTs: Infinity, lastTs: -Infinity };
+    sims.set(imsi, t);
+  }
+  t.rows++;
+  if (withCell) t.withCell++;
+  if (!Number.isNaN(ts)) {
+    t.firstTs = Math.min(t.firstTs, ts);
+    t.lastTs = Math.max(t.lastTs, ts);
+  }
+  return t;
+}
+
 /** Can record r join group g as another row of the same call/attempt? */
 function belongsTo(g: CommRec[], r: CommRec): boolean {
   // One row per sheet and per handset: two such rows are two communications.
@@ -169,11 +200,14 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
 
   // ---- Target IMSIs: the DATA sheet only ever holds the target's sessions.
   const targetImsis = new Set<string>();
+  const sims = new Map<string, SimTally>();
   if (data && data.rows.length > 1) {
     const col = columns(data.rows[0]);
     for (const r of data.rows.slice(1)) {
       const imsi = clean(r[col('IMSI')]);
-      if (imsi) targetImsis.add(imsi);
+      if (!imsi) continue;
+      targetImsis.add(imsi);
+      tallySim(sims, imsi, parseWallClock(r[col('START TIME')], zMode), !!cellFrom(r, col)).data++;
     }
   }
 
@@ -247,18 +281,79 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     stats.push(stat);
   }
 
-  // No DATA sheet: fall back to the IMSI most often seen on the target's role side.
+  // ---- Whose handset wrote each row. The IMSI decides: a row from another
+  // SIM is a same-network peer's leg, and its cell is the peer's position.
+  for (const r of comm) {
+    if (!r.obs.imsi) continue;
+    const t = tallySim(sims, r.obs.imsi, r.ts, !!r.obs.cell);
+    // A forwarding record is written by the network, not by a handset on either side.
+    if (r.kind === 'VOICE' && r.type.toUpperCase() === 'CF') continue;
+    const sideKey = r.roleSide === 'A' ? r.a.key : r.b.key;
+    if (sideKey === target) t.targetSide++;
+    else {
+      t.peerSide++;
+      const other = sideKey || (r.a.key === target ? r.b.key : r.a.key);
+      if (other) t.numbers.set(other, (t.numbers.get(other) ?? 0) + 1);
+    }
+  }
+  const basis = new Map<string, ImsiCheck['basis']>([...targetImsis].map((i) => [i, 'data']));
+  // Without DATA rows, the SIM most often on the target's side of the events.
   if (targetImsis.size === 0) {
     const top = mode(roleOwnedImsis, (x) => x);
-    if (top) targetImsis.add(top);
+    if (top) {
+      targetImsis.add(top);
+      basis.set(top, 'main');
+    }
+  }
+  // A number has one SIM at a time: another SIM on the target's side that is
+  // never in use while the target's known SIMs are is a SIM change. A peer's
+  // SIM is in use alongside the target's, so it never qualifies.
+  const candidates = [...sims].filter(([imsi, t]) => !targetImsis.has(imsi) && t.targetSide >= 2 && t.targetSide > t.peerSide);
+  for (const [imsi, t] of candidates.sort((x, y) => y[1].targetSide - x[1].targetSide)) {
+    const overlaps = [...targetImsis].some((o) => {
+      const u = sims.get(o);
+      return !!u && t.firstTs <= u.lastTs && u.firstTs <= t.lastTs;
+    });
+    if (!overlaps) {
+      targetImsis.add(imsi);
+      basis.set(imsi, 'sim-change');
+    }
   }
 
+  const byRole = { target: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity }, peer: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity } };
   for (const r of comm) {
     const sideKey = r.roleSide === 'A' ? r.a.key : r.b.key;
     r.owner = r.obs.imsi ? (targetImsis.has(r.obs.imsi) ? 'target' : 'peer') : sideKey === target ? 'target' : 'peer';
     const st = statOf.get(r.kind)!;
     if (!r.obs.cell) st.noLocation++;
     if (r.owner === 'peer') st.peerOwned++;
+    if (!r.obs.imsi) {
+      const b = byRole[r.owner];
+      b.rows++;
+      if (r.obs.cell) b.withCell++;
+      b.firstTs = Math.min(b.firstTs, r.ts);
+      b.lastTs = Math.max(b.lastTs, r.ts);
+    }
+  }
+  const imsiCheck: ImsiCheck[] = [...sims]
+    .map(([imsi, t]): ImsiCheck => {
+      const mine = targetImsis.has(imsi);
+      const number = mine ? target : [...t.numbers].sort((x, y) => y[1] - x[1])[0]?.[0];
+      return {
+        imsi,
+        owner: mine ? 'target' : 'peer',
+        ...(number ? { number } : {}),
+        basis: basis.get(imsi) ?? 'other',
+        rows: t.rows,
+        withCell: t.withCell,
+        firstTs: finite(t.firstTs),
+        lastTs: finite(t.lastTs),
+      };
+    })
+    .sort((x, y) => (x.owner === y.owner ? y.rows - x.rows : x.owner === 'target' ? -1 : 1));
+  for (const owner of ['target', 'peer'] as const) {
+    const b = byRole[owner];
+    if (b.rows) imsiCheck.push({ imsi: '', owner, ...(owner === 'target' && target ? { number: target } : {}), basis: 'role', rows: b.rows, withCell: b.withCell, firstTs: finite(b.firstTs), lastTs: finite(b.lastTs) });
   }
 
   // ---- Merge every row of the same communication, across VOICE and IMS.
@@ -484,9 +579,16 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
   const commRows = comm.length;
   const notes: string[] = [];
   if (peerOwned > 0) {
+    const others = imsiCheck.filter((c) => c.owner === 'peer' && c.imsi).length;
     notes.push(
-      `ไฟล์มีบันทึกที่มาจากเครื่องของคู่สาย (ลูกค้าเครือข่ายเดียวกัน) ${peerOwned.toLocaleString('th-TH')} แถว ระบบแยกตำแหน่งของคู่สายออกจากตำแหน่งของเป้าหมายโดยดูจาก IMSI ตำแหน่งเหล่านี้จึงไม่ถูกนับเป็นตำแหน่งของเป้าหมาย`,
+      `ไฟล์มีบันทึกที่มาจากเครื่องของคู่สาย (ลูกค้าเครือข่ายเดียวกัน) ${peerOwned.toLocaleString('th-TH')} แถว` +
+        (others ? ` จาก IMSI ที่ไม่ใช่ของเป้าหมาย ${others.toLocaleString('th-TH')} ค่า` : '') +
+        ` ระบบแยกตำแหน่งของคู่สายออกจากตำแหน่งของเป้าหมายโดยดูจาก IMSI ตำแหน่งเหล่านี้จึงไม่ถูกนับเป็นตำแหน่งของเป้าหมาย (ดูตาราง "ตรวจเจ้าของพิกัดจาก IMSI")`,
     );
+  }
+  const changed = imsiCheck.filter((c) => c.basis === 'sim-change').length;
+  if (changed > 0) {
+    notes.push(`เป้าหมายใช้ซิมมากกว่า 1 ใบในช่วงข้อมูล (พบ IMSI ของเป้าหมาย ${targetImsis.size} ค่า ใช้ต่างช่วงเวลากัน) ระบบนับพิกัดจากทุกซิมของเป้าหมายเป็นตำแหน่งของเป้าหมาย`);
   }
   if (mergedRows > 0) {
     notes.push(
@@ -523,6 +625,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
       declaredPeriod: info.period,
       sheets: stats,
       targetImsis: [...targetImsis],
+      imsiCheck,
       notes,
       zMode,
       hasCoordinates,
