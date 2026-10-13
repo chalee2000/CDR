@@ -316,6 +316,15 @@ h4 {
   color: var(--ink-2);
 }
 
+.field-warn {
+  color: var(--warn-ink);
+  font-size: 12.5px;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--warn-ink);
+}
+
 .input,
 select.input {
   border: 1px solid var(--border-strong);

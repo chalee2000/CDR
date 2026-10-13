@@ -1,6 +1,6 @@
 /**
- * Person details an investigator attaches to a number (name, address,
- * criminal record, photo). They are typed in by the user — never read from
+ * Person details an investigator attaches to a number (name, national ID,
+ * address, criminal record, photo). They are typed in by the user — never read from
  * CDR files — live only in page memory, and leave the browser only as a file
  * the user saves on purpose.
  */
@@ -11,6 +11,8 @@ export interface PersonProfile {
   firstName?: string;
   lastName?: string;
   nickname?: string;
+  /** Thai national ID as 13 digits (no dashes), or another ID document number as typed. */
+  nationalId?: string;
   address?: string;
   /** One case per line. */
   criminalRecord?: string;
@@ -31,6 +33,7 @@ const TEXT_LIMITS = {
   firstName: 200,
   lastName: 200,
   nickname: 200,
+  nationalId: 40,
   address: 2000,
   criminalRecord: 10000,
   notes: 10000,
@@ -69,6 +72,7 @@ export function cleanProfile(input: unknown, now = Date.now()): PersonProfile | 
     const v = cleanText(o[f], TEXT_LIMITS[f]);
     if (v) p[f] = v;
   }
+  if (p.nationalId) p.nationalId = normalizeNationalId(p.nationalId);
   if (isValidPhoto(o.photo)) p.photo = o.photo;
   return hasContent(p) ? p : undefined;
 }
@@ -82,6 +86,37 @@ export function personName(p: PersonProfile | undefined): string | undefined {
   if (!p) return undefined;
   const full = [p.firstName, p.lastName].filter(Boolean).join(' ').trim();
   return full || p.nickname || undefined;
+}
+
+/** "X-XXXX-XXXXX-XX-X" or "X XXXX XXXXX XX X" → 13 digits; anything else stays as typed, on one line. */
+export function normalizeNationalId(v: string): string {
+  const digits = v.replace(/[\s.-]/g, '');
+  return /^\d{13}$/.test(digits) ? digits : v.replace(/\s+/g, ' ').trim();
+}
+
+/** The 13th digit of a Thai national ID checks the first 12 (weights 13…2, mod 11). */
+export function isValidThaiId(digits: string): boolean {
+  if (!/^\d{13}$/.test(digits)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(digits[i]) * (13 - i);
+  return (11 - (sum % 11)) % 10 === Number(digits[12]);
+}
+
+/** 13 digits as printed on the card: X-XXXX-XXXXX-XX-X. Other IDs are shown as typed. */
+export function formatNationalId(v: string | undefined): string {
+  if (!v) return '';
+  const d = normalizeNationalId(v);
+  return /^\d{13}$/.test(d) ? `${d[0]}-${d.slice(1, 5)}-${d.slice(5, 10)}-${d.slice(10, 12)}-${d[12]}` : d;
+}
+
+/** What looks wrong with a typed ID (Thai), or undefined. It never blocks saving. */
+export function nationalIdProblem(v: string | undefined): string | undefined {
+  const typed = (v ?? '').trim();
+  if (!typed) return undefined;
+  const digits = typed.replace(/[\s.-]/g, '');
+  if (/^\d+$/.test(digits) && digits.length !== 13) return `เลขบัตรประชาชนมี 13 หลัก (ที่กรอกมี ${digits.length} หลัก)`;
+  if (/^\d{13}$/.test(digits)) return isValidThaiId(digits) ? undefined : 'หลักสุดท้ายไม่ตรงกับเลขตรวจสอบของ 12 หลักแรก อาจพิมพ์ผิด';
+  return 'ไม่ใช่เลขบัตรประชาชน 13 หลัก จะบันทึกตามที่กรอก (เช่น เลขหนังสือเดินทาง)';
 }
 
 export function recordLines(p: PersonProfile | undefined): string[] {

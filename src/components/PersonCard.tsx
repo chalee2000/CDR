@@ -1,4 +1,4 @@
-import { personName, recordLines, type PersonProfile } from '../lib/profiles';
+import { formatNationalId, isValidThaiId, personName, recordLines, type PersonProfile } from '../lib/profiles';
 
 /**
  * A person's details as typed in by the user, with an edit button. `compact`
@@ -26,6 +26,13 @@ export function PersonCard({ number, profile, onEdit, compact }: { number: strin
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
         {!compact && <div className="person-name-lg">{name ?? 'ไม่ระบุชื่อ'}</div>}
         {profile.nickname && name !== profile.nickname && <div className="muted">ชื่อเล่น/ฉายา: {profile.nickname}</div>}
+        {profile.nationalId && (
+          <div>
+            <span className="muted">เลขบัตรประชาชน: </span>
+            <span className="mono">{formatNationalId(profile.nationalId)}</span>
+            {/^\d{13}$/.test(profile.nationalId) && !isValidThaiId(profile.nationalId) && <span className="field-warn"> (เลขตรวจสอบไม่ตรง อาจพิมพ์ผิด)</span>}
+          </div>
+        )}
         {profile.address && (
           <div>
             <div className="person-label">ที่อยู่</div>

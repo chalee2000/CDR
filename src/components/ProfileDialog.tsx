@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { cleanProfile, type PersonProfile, type ProfileTextField } from '../lib/profiles';
+import { cleanProfile, formatNationalId, nationalIdProblem, type PersonProfile, type ProfileTextField } from '../lib/profiles';
 import { useStore } from '../state/store';
 import { photoToDataUrl } from './photo';
 
-const FIELDS: { key: ProfileTextField; label: string; rows?: number; placeholder?: string; wide?: boolean }[] = [
+const FIELDS: { key: ProfileTextField; label: string; rows?: number; placeholder?: string; wide?: boolean; check?: (v: string | undefined) => string | undefined }[] = [
   { key: 'firstName', label: 'ชื่อ (รวมคำนำหน้า)', placeholder: 'เช่น นายสมมติ' },
   { key: 'lastName', label: 'นามสกุล' },
   { key: 'nickname', label: 'ชื่อเล่น/ฉายา' },
+  { key: 'nationalId', label: 'เลขบัตรประชาชน', placeholder: 'เลข 13 หลัก', check: nationalIdProblem },
   { key: 'address', label: 'ที่อยู่', rows: 2, wide: true },
   { key: 'criminalRecord', label: 'ประวัติคดีอาญา (บรรทัดละ 1 คดี)', rows: 4, wide: true, placeholder: 'เช่น ยาเสพติด (ครอบครองเพื่อจำหน่าย) คดีอาญาที่ …/2565 สภ.…' },
   { key: 'notes', label: 'หมายเหตุ', rows: 2, wide: true },
@@ -25,7 +26,9 @@ export function ProfileDialog() {
   // Start from the saved profile each time the dialog opens for a number.
   useEffect(() => {
     if (!number) return;
-    setDraft(profiles[number] ?? { number, updatedAt: 0 });
+    const saved = profiles[number];
+    // The ID is stored as bare digits; edit it as printed on the card.
+    setDraft(saved ? { ...saved, nationalId: saved.nationalId && formatNationalId(saved.nationalId) } : { number, updatedAt: 0 });
     setError(undefined);
     const t = setTimeout(() => first.current?.focus(), 0);
     return () => clearTimeout(t);
@@ -131,23 +134,33 @@ export function ProfileDialog() {
             />
           </div>
           <div className="profile-fields">
-            {FIELDS.map((f, i) => (
-              <label key={f.key} className={`field${f.wide ? ' wide' : ''}`}>
-                <span>{f.label}</span>
-                {f.rows ? (
-                  <textarea className="input" rows={f.rows} placeholder={f.placeholder} value={draft[f.key] ?? ''} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />
-                ) : (
-                  <input
-                    ref={i === 0 ? first : undefined}
-                    className="input"
-                    placeholder={f.placeholder}
-                    value={draft[f.key] ?? ''}
-                    onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-                    onKeyDown={(e) => e.key === 'Enter' && save()}
-                  />
-                )}
-              </label>
-            ))}
+            {FIELDS.map((f, i) => {
+              const problem = f.check?.(draft[f.key]);
+              return (
+                <label key={f.key} className={`field${f.wide ? ' wide' : ''}`}>
+                  <span>{f.label}</span>
+                  {f.rows ? (
+                    <textarea className="input" rows={f.rows} placeholder={f.placeholder} value={draft[f.key] ?? ''} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />
+                  ) : (
+                    <input
+                      ref={i === 0 ? first : undefined}
+                      className="input"
+                      placeholder={f.placeholder}
+                      value={draft[f.key] ?? ''}
+                      onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                      onKeyDown={(e) => e.key === 'Enter' && save()}
+                      aria-invalid={problem ? true : undefined}
+                      aria-describedby={problem ? `${f.key}-problem` : undefined}
+                    />
+                  )}
+                  {problem && (
+                    <small id={`${f.key}-problem`} className="field-warn">
+                      {problem}
+                    </small>
+                  )}
+                </label>
+              );
+            })}
           </div>
         </div>
         {error && (

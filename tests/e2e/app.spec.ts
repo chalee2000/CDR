@@ -113,7 +113,7 @@ test('link chart: search, details and a person profile saved to and opened from 
   const toolbar = page.getByRole('toolbar', { name: 'เครื่องมือผัง' });
   await expect(toolbar).toBeVisible();
 
-  await page.getByLabel('ค้นหาเลขหมายหรือชื่อในผัง').fill('0860000111');
+  await page.getByLabel('ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง').fill('0860000111');
   await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
   const panel = page.getByRole('region', { name: 'รายละเอียดเลขหมาย' });
   await expect(panel).toContainText('ผู้ติดต่อร่วม 2 เป้าหมาย');
@@ -128,6 +128,12 @@ test('link chart: search, details and a person profile saved to and opened from 
   const dialog = page.getByRole('dialog', { name: /ข้อมูลบุคคลของเลข/ });
   await dialog.getByLabel('ชื่อ (รวมคำนำหน้า)').fill('นายทดสอบ');
   await dialog.getByLabel('นามสกุล').fill('ตัวอย่าง');
+  // A fictitious ID: a wrong check digit is flagged, the right one is not.
+  const nid = dialog.getByLabel('เลขบัตรประชาชน');
+  await nid.fill('1111111111111');
+  await expect(dialog).toContainText('หลักสุดท้ายไม่ตรงกับเลขตรวจสอบ');
+  await nid.fill('1-1111-11111-11-9');
+  await expect(dialog).not.toContainText('หลักสุดท้ายไม่ตรงกับเลขตรวจสอบ');
   await dialog.getByLabel('ที่อยู่').fill('ที่อยู่สมมติ');
   await dialog.getByLabel('ประวัติคดีอาญา (บรรทัดละ 1 คดี)').fill('คดีสมมติ');
   await page.getByTestId('photo-input').setInputFiles({ name: 'picture.png', mimeType: 'image/png', buffer: picture });
@@ -135,6 +141,15 @@ test('link chart: search, details and a person profile saved to and opened from 
   await dialog.getByRole('button', { name: 'บันทึก', exact: true }).click();
   await expect(panel).toContainText('นายทดสอบ ตัวอย่าง');
   await expect(panel).toContainText('ประวัติคดีอาญา 1 รายการ');
+  await expect(panel).toContainText('เลขบัตรประชาชน: 1-1111-11111-11-9');
+  // The chart can be searched by the ID too.
+  const search = page.getByLabel('ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง');
+  await search.fill('0810000101');
+  await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+  await expect(panel).not.toContainText('เลขบัตรประชาชน');
+  await search.fill('1111111111119');
+  await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+  await expect(panel).toContainText('เลขบัตรประชาชน: 1-1111-11111-11-9');
   await expect(page.getByRole('table', { name: 'ตัวชี้วัดเครือข่าย' })).toContainText('นายทดสอบ ตัวอย่าง');
   await shot(page, '10-link-profile');
 
@@ -154,6 +169,7 @@ test('link chart: search, details and a person profile saved to and opened from 
   const json = JSON.parse(readFileSync(path, 'utf8'));
   expect(json.profiles.map((p: { number: string }) => p.number)).toEqual(['0860000111']);
   expect(json.profiles[0].photo).toMatch(/^data:image\/jpeg;base64,/);
+  expect(json.profiles[0].nationalId).toBe('1111111111119');
   await expect(sidebar).not.toContainText('ยังไม่ได้บันทึก');
 
   // Nothing is kept by the browser: a new page starts empty until the file is opened.
@@ -170,6 +186,7 @@ test('link chart: search, details and a person profile saved to and opened from 
   const drawer = page.getByRole('dialog', { name: /0860000111/ });
   await expect(drawer.getByRole('img', { name: 'ผังความเชื่อมโยงของ 0860000111' })).toBeVisible();
   await expect(drawer).toContainText('คดีสมมติ');
+  await expect(drawer).toContainText('1-1111-11111-11-9');
   await page.keyboard.press('Escape');
 
   await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');

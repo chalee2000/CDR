@@ -71,7 +71,7 @@ export function NetworkView() {
       : undefined;
 
   const nameOf = (n: Pick<NetNode, 'id' | 'isTarget' | 'label'>) => personName(profiles[n.id]) ?? (n.isTarget && n.label !== n.id ? n.label : undefined);
-  const searchable = useMemo(() => full.nodes.map((n) => ({ id: n.id, name: nameOf(n) ?? '' })), [full, profiles]); // eslint-disable-line react-hooks/exhaustive-deps
+  const searchable = useMemo(() => full.nodes.map((n) => ({ id: n.id, name: nameOf(n) ?? '', nationalId: profiles[n.id]?.nationalId ?? '' })), [full, profiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const find = (q: string) => {
     const s = q.trim().toLowerCase();
@@ -80,6 +80,7 @@ export function NetworkView() {
     const hit =
       searchable.find((o) => o.id.toLowerCase() === digits) ??
       (digits.length >= 3 ? searchable.find((o) => o.id.toLowerCase().includes(digits)) : undefined) ??
+      (digits.length >= 4 ? searchable.find((o) => o.nationalId.toLowerCase().replace(/[\s-]/g, '').includes(digits)) : undefined) ??
       searchable.find((o) => o.name && o.name.toLowerCase().includes(s));
     setMiss(!hit);
     if (!hit) return;
@@ -242,8 +243,8 @@ export function NetworkView() {
               className={`input${miss ? ' invalid' : ''}`}
               type="search"
               list="link-search-options"
-              placeholder="ค้นหาเลขหมายหรือชื่อ"
-              aria-label="ค้นหาเลขหมายหรือชื่อในผัง"
+              placeholder="ค้นหาเลขหมาย ชื่อ หรือเลขบัตร"
+              aria-label="ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);

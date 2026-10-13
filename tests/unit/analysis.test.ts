@@ -262,12 +262,13 @@ describe('exports', () => {
   });
 
   it('adds the person details typed in by the user (and no sheet when there are none)', () => {
-    const profiles = { '0860000111': { number: '0860000111', firstName: 'นายทดสอบ', lastName: 'ตัวอย่าง', criminalRecord: 'คดีสมมติ 1\nคดีสมมติ 2', updatedAt: Date.UTC(2026, 9, 1) } };
+    const profiles = { '0860000111': { number: '0860000111', firstName: 'นายทดสอบ', lastName: 'ตัวอย่าง', nationalId: '1111111111119', criminalRecord: 'คดีสมมติ 1\nคดีสมมติ 2', updatedAt: Date.UTC(2026, 9, 1) } };
     const tables = analysisTables(datasets, settings, undefined, profiles);
     for (const t of tables) for (const r of t.rows) expect(r).toHaveLength(t.header.length);
     const people = tables.find((t) => t.sheet === 'ข้อมูลบุคคล')!;
     expect(people.rows).toHaveLength(1);
     expect(people.rows[0][people.header.indexOf('จำนวนคดี')]).toBe(2);
+    expect(people.rows[0][people.header.indexOf('เลขบัตรประชาชน')]).toBe('1-1111-11111-11-9');
     const contacts = tables.find((t) => t.sheet === 'คู่ติดต่อ')!;
     expect(contacts.rows.some((r) => r[1] === '0860000111' && r[2] === 'นายทดสอบ ตัวอย่าง')).toBe(true);
     expect(analysisTables(datasets, settings).some((t) => t.sheet === 'ข้อมูลบุคคล')).toBe(false);

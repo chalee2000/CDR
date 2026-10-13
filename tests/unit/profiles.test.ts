@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   cleanProfile,
+  formatNationalId,
+  isValidThaiId,
   MAX_PROFILES,
   mergeProfiles,
+  nationalIdProblem,
   parseProfilesFile,
   personName,
   PROFILE_FORMAT,
@@ -88,6 +91,29 @@ describe('person profiles', () => {
     expect(replaced).toBe(1);
     expect(next[somchai.number].firstName).toBe('ชื่อใหม่');
     expect(cur[somchai.number].firstName).toBe('นายสมมติ');
+  });
+
+  it('keeps a national ID as 13 digits and checks its last digit', () => {
+    // Fictitious IDs: 1-1111-11111-11-9 has a valid check digit, …-1 does not.
+    expect(isValidThaiId('1111111111119')).toBe(true);
+    expect(isValidThaiId('1111111111111')).toBe(false);
+    expect(isValidThaiId('111111111111')).toBe(false);
+    expect(cleanProfile({ number: '0860000111', nationalId: ' 1-1111-11111-11-9 ' })!.nationalId).toBe('1111111111119');
+    expect(cleanProfile({ number: '0860000111', nationalId: '1 1111 11111 11 9' })!.nationalId).toBe('1111111111119');
+    // Another document number stays as typed, on one line.
+    expect(cleanProfile({ number: '0860000111', nationalId: 'AA 000\n0000' })!.nationalId).toBe('AA 000 0000');
+    // An ID alone is worth keeping.
+    expect(cleanProfile({ number: '0860000111', nationalId: '1111111111119' })).toBeDefined();
+    expect(formatNationalId('1111111111119')).toBe('1-1111-11111-11-9');
+    expect(formatNationalId('AA0000000')).toBe('AA0000000');
+    expect(nationalIdProblem('1-1111-11111-11-9')).toBeUndefined();
+    expect(nationalIdProblem('')).toBeUndefined();
+    expect(nationalIdProblem('1111111111111')).toMatch(/เลขตรวจสอบ/);
+    expect(nationalIdProblem('11111')).toMatch(/5 หลัก/);
+    expect(nationalIdProblem('AA0000000')).toMatch(/ตามที่กรอก/);
+    // Saved to a file and read back.
+    const text = serializeProfiles({ '0860000111': cleanProfile({ number: '0860000111', firstName: 'นายสมมติ', nationalId: '1-1111-11111-11-9' })! });
+    expect(parseProfilesFile(text).profiles[0].nationalId).toBe('1111111111119');
   });
 
   it('names saved files by date and time', () => {
