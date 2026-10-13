@@ -143,6 +143,43 @@ export const DEFAULT_SETTINGS: Settings = {
   showBasemap: true,
 };
 
+type NumericSetting = 'nightStart' | 'nightEnd' | 'coLocationMinutes' | 'coLocationKm' | 'relayMinutes' | 'silenceHours' | 'burstCount' | 'burstMinutes';
+
+/** Allowed range of each numeric setting (the inputs and the file readers share it). */
+export const SETTING_LIMITS: Record<NumericSetting, { min: number; max: number; int?: boolean }> = {
+  nightStart: { min: 0, max: 23, int: true },
+  nightEnd: { min: 0, max: 23, int: true },
+  coLocationMinutes: { min: 1, max: 720 },
+  coLocationKm: { min: 0.1, max: 50 },
+  relayMinutes: { min: 1, max: 1440 },
+  silenceHours: { min: 1, max: 720 },
+  burstCount: { min: 2, max: 100, int: true },
+  burstMinutes: { min: 1, max: 240 },
+};
+
+const ENUM_SETTINGS = {
+  zMode: ['local', 'utc'],
+  yearStyle: ['ce', 'be'],
+} as const;
+
+/** Settings from untrusted input (browser storage, a backup file): unknown keys and bad values fall back to the defaults. */
+export function cleanSettings(input: unknown): Settings {
+  const src = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  // Own properties only: nothing inherited through the prototype counts.
+  const o = Object.fromEntries(Object.entries(src));
+  const out: Settings = { ...DEFAULT_SETTINGS };
+  for (const [key, { min, max, int }] of Object.entries(SETTING_LIMITS) as [NumericSetting, (typeof SETTING_LIMITS)[NumericSetting]][]) {
+    const v = o[key];
+    if (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max && (!int || Number.isInteger(v))) out[key] = v;
+  }
+  for (const key of ['dedupeExact', 'includeServiceNumbers', 'burstSms', 'showBasemap'] as const) {
+    if (typeof o[key] === 'boolean') out[key] = o[key];
+  }
+  if (ENUM_SETTINGS.zMode.includes(o.zMode as ZMode)) out.zMode = o.zMode as ZMode;
+  if (ENUM_SETTINGS.yearStyle.includes(o.yearStyle as Settings['yearStyle'])) out.yearStyle = o.yearStyle as Settings['yearStyle'];
+  return out;
+}
+
 /** Raw workbook as read from disk: every cell already converted to string | null. */
 export interface RawSheet {
   name: string;
@@ -162,7 +199,10 @@ export interface ColumnMapping {
   target?: string;
 }
 
-export type FlatField =
-  | 'time' | 'date' | 'clock' | 'end' | 'a' | 'b' | 'type' | 'direction' | 'duration'
-  | 'imsi' | 'imei' | 'lac' | 'ci' | 'tac' | 'eci' | 'cellName' | 'site' | 'location'
-  | 'tumbol' | 'amphur' | 'province' | 'region' | 'lat' | 'lon' | 'plmn';
+export const FLAT_FIELDS = [
+  'time', 'date', 'clock', 'end', 'a', 'b', 'type', 'direction', 'duration',
+  'imsi', 'imei', 'lac', 'ci', 'tac', 'eci', 'cellName', 'site', 'location',
+  'tumbol', 'amphur', 'province', 'region', 'lat', 'lon', 'plmn',
+] as const;
+
+export type FlatField = (typeof FLAT_FIELDS)[number];

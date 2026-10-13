@@ -5,6 +5,7 @@ import { normHeader } from '../lib/parsers/table';
 import { summarize } from '../lib/analysis/summary';
 import { fmtDate } from '../lib/time';
 import type { ImportedCoords } from '../lib/analysis/locations';
+import { SETTING_LIMITS } from '../lib/types';
 import { parseProfilesFile, personName, profilesFileName, serializeProfiles } from '../lib/profiles';
 import { useStore } from '../state/store';
 import { Swatch } from './bits';
@@ -36,12 +37,12 @@ export function ImportPanel() {
         }}
       >
         <strong>{busy ? 'กำลังอ่านไฟล์…' : 'ลากไฟล์มาวาง หรือคลิกเพื่อเลือก'}</strong>
-        <p>.xlsx หรือ .csv เลือกได้หลายไฟล์ (AIS, True/DTAC และตารางทั่วไป)</p>
+        <p>.xlsx หรือ .csv เลือกได้หลายไฟล์ (AIS, True/DTAC และตารางทั่วไป) · วางไฟล์สำรอง .cdrbak เพื่อกู้งาน</p>
       </div>
       <input
         ref={input}
         type="file"
-        accept=".xlsx,.xlsm,.csv,.txt"
+        accept=".xlsx,.xlsm,.csv,.txt,.cdrbak"
         multiple
         hidden
         data-testid="file-input"
@@ -263,16 +264,19 @@ export function SettingsPanel() {
   const { settings: s, setSettings, resetSettings, coordImport, setCoordImport } = useStore();
   const coordInput = useRef<HTMLInputElement>(null);
   const [coordError, setCoordError] = useState<string>();
-  const num = (key: keyof typeof s, min: number, max: number) => ({
-    type: 'number' as const,
-    min,
-    max,
-    value: s[key] as number,
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      const v = Number(e.target.value);
-      if (Number.isFinite(v) && v >= min && v <= max) setSettings({ [key]: v } as never);
-    },
-  });
+  const num = (key: keyof typeof SETTING_LIMITS) => {
+    const { min, max, int } = SETTING_LIMITS[key];
+    return {
+      type: 'number' as const,
+      min,
+      max,
+      value: s[key],
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = Number(e.target.value);
+        if (Number.isFinite(v) && v >= min && v <= max && (!int || Number.isInteger(v))) setSettings({ [key]: v });
+      },
+    };
+  };
   const hours = Array.from({ length: 24 }, (_, i) => i);
   return (
     <section className="side-section">
@@ -323,31 +327,31 @@ export function SettingsPanel() {
           <div className="row2">
             <label className="field">
               <span>อยู่พื้นที่เดียวกัน ± นาที</span>
-              <input className="input" {...num('coLocationMinutes', 1, 720)} />
+              <input className="input" {...num('coLocationMinutes')} />
             </label>
             <label className="field">
               <span>ระยะห่าง (กม.)</span>
-              <input className="input" step={0.5} {...num('coLocationKm', 0.1, 50)} />
+              <input className="input" step={0.5} {...num('coLocationKm')} />
             </label>
           </div>
           <div className="row2">
             <label className="field">
               <span>ติดต่อทอด ภายใน นาที</span>
-              <input className="input" {...num('relayMinutes', 1, 1440)} />
+              <input className="input" {...num('relayMinutes')} />
             </label>
             <label className="field">
               <span>ช่วงเงียบ ≥ ชม.</span>
-              <input className="input" {...num('silenceHours', 1, 720)} />
+              <input className="input" {...num('silenceHours')} />
             </label>
           </div>
           <div className="row2">
             <label className="field">
               <span>โทรถี่ ≥ ครั้ง</span>
-              <input className="input" {...num('burstCount', 2, 100)} />
+              <input className="input" {...num('burstCount')} />
             </label>
             <label className="field">
               <span>ภายใน นาที</span>
-              <input className="input" {...num('burstMinutes', 1, 240)} />
+              <input className="input" {...num('burstMinutes')} />
             </label>
           </div>
           <div className="field">

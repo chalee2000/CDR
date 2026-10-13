@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { isBackupFile, type SessionSnapshot } from '../lib/backup';
 import { buildDataset } from '../lib/dataset';
 import { readWorkbook } from '../lib/io/readWorkbook';
 import { parseWorkbook, type SheetSuggestion } from '../lib/parsers';
 import { generateSamples } from '../lib/samples/generate';
 import type { ImportedCoords } from '../lib/analysis/locations';
 import { hasContent, mergeProfiles, type PersonProfile, type ProfileMap } from '../lib/profiles';
-import { DEFAULT_SETTINGS, type ColumnMapping, type Dataset, type RawWorkbook, type Settings } from '../lib/types';
+import { cleanSettings, DEFAULT_SETTINGS, type ColumnMapping, type Dataset, type RawWorkbook, type Settings } from '../lib/types';
 
 export type ThemeChoice = 'system' | 'light' | 'dark';
 
@@ -62,6 +63,13 @@ interface Store {
   markProfilesSaved: () => void;
   profileEditor?: string;
   openProfileEditor: (number: string | undefined) => void;
+  /** Everything in the page, ready to write to a backup file. */
+  makeSnapshot: () => SessionSnapshot;
+  /** Replace the whole session with one read from a backup file. */
+  restoreSession: (s: SessionSnapshot) => void;
+  /** A backup file waiting for the restore dialog. */
+  restoreRequest?: File;
+  requestRestore: (file: File | undefined) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -70,12 +78,12 @@ const SETTINGS_KEY = 'cdr-analyzer:settings';
 const THEME_KEY = 'cdr-analyzer:theme';
 
 // Browser storage holds preferences only — never CDR data.
-function readStored<T>(key: string, fallback: T): T {
+function readSettings(): Settings {
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw ? cleanSettings(JSON.parse(raw)) : DEFAULT_SETTINGS;
   } catch {
-    return fallback;
+    return DEFAULT_SETTINGS;
   }
 }
 function writeStored(key: string, value: unknown) {
@@ -93,7 +101,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [slots, setSlots] = useState<Record<string, number>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
-  const [settings, setSettingsState] = useState<Settings>(() => readStored(SETTINGS_KEY, DEFAULT_SETTINGS));
+  const [settings, setSettingsState] = useState<Settings>(readSettings);
   const [theme, setThemeState] = useState<ThemeChoice>(() => {
     try {
       const t = localStorage.getItem(THEME_KEY);
@@ -111,6 +119,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [profiles, setProfiles] = useState<ProfileMap>({});
   const [profilesDirty, setProfilesDirty] = useState(false);
   const [profileEditor, setProfileEditor] = useState<string>();
+  const [restoreRequest, setRestoreRequest] = useState<File>();
 
   const notify = useCallback((kind: 'error' | 'info', text: string) => {
     setMessages((m) => [...m, { id: ++msgSeq, kind, text }]);
@@ -230,6 +239,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (list: File[]) => {
       setBusy(true);
       try {
+        // A backup dropped here is restored, not read as CDR. Restoring
+        // replaces the session, so files picked with it are left out.
+        const backups = await Promise.all(list.map((f) => isBackupFile(f).catch(() => false)));
+        const backup = list.find((_, i) => backups[i]);
+        if (backup) {
+          setRestoreRequest(backup);
+          if (list.length > 1) notify('info', `เปิดไฟล์สำรอง ${backup.name} — ไม่ได้นำเข้าไฟล์อื่นที่เลือกมาพร้อมกัน (${list.length - 1} ไฟล์) เพราะการกู้ไฟล์จะแทนที่งานทั้งหมด`);
+          return;
+        }
         for (const file of list) {
           try {
             const raw = await readWorkbook(await file.arrayBuffer(), file.name);
@@ -275,6 +293,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSettingsState(DEFAULT_SETTINGS);
     writeStored(SETTINGS_KEY, DEFAULT_SETTINGS);
   }, []);
+
+  const makeSnapshot = useCallback(
+    (): SessionSnapshot => ({
+      settings,
+      files: files.map((f) => ({
+        fileName: f.raw.fileName,
+        sheets: f.raw.sheets,
+        ...(f.mapping ? { mapping: f.mapping } : {}),
+        targets: datasets
+          .filter((d) => d.id.startsWith(`${f.id}:`))
+          .map((d) => ({ target: d.target, slot: d.slot, ...(d.label !== d.target ? { label: d.label } : {}) })),
+      })),
+      profiles: Object.values(profiles),
+      ...(coordImport ? { coords: { name: coordImport.name, entries: [...coordImport.coords].map(([key, [lat, lon]]): [string, number, number] => [key, lat, lon]) } } : {}),
+    }),
+    [settings, files, datasets, profiles, coordImport],
+  );
+
+  const restoreSession = useCallback(
+    (s: SessionSnapshot) => {
+      const entries: FileEntry[] = [];
+      const nextSlots: Record<string, number> = {};
+      const nextLabels: Record<string, string> = {};
+      const unread: MappingRequest[] = [];
+      for (const f of s.files) {
+        const entry: FileEntry = { id: `f${++fileSeq}`, raw: { fileName: f.fileName, sheets: f.sheets }, mapping: f.mapping };
+        for (const t of f.targets) {
+          nextSlots[`${entry.id}:${t.target}`] = t.slot;
+          if (t.label) nextLabels[`${entry.id}:${t.target}`] = t.label;
+        }
+        // A file the parser no longer recognises goes to the column dialog, as on import.
+        const res = parseWorkbook(entry.raw, s.settings.zMode, entry.mapping);
+        if (res.kind === 'ok') entries.push(entry);
+        else if (res.suggestions.length) unread.push({ file: entry, suggestions: res.suggestions, reason: res.reason });
+        else notify('error', `${f.fileName}: อ่านไฟล์นี้จากไฟล์สำรองไม่ได้`);
+      }
+      // The online basemap stays as this device has it: it is a privacy choice, not part of the case.
+      const nextSettings = { ...s.settings, showBasemap: settings.showBasemap };
+      setSettingsState(nextSettings);
+      writeStored(SETTINGS_KEY, nextSettings);
+      setFiles(entries);
+      setSlots(nextSlots);
+      setLabels(nextLabels);
+      setQueue(unread);
+      setProfiles(Object.fromEntries(s.profiles.map((p) => [p.number, p])));
+      setProfilesDirty(false);
+      setCoordImport(s.coords ? { name: s.coords.name, coords: new Map(s.coords.entries.map(([key, lat, lon]) => [key, [lat, lon]])) } : undefined);
+      setDrawerPeer(undefined);
+      setProfileEditor(undefined);
+      setSelectedId(undefined);
+    },
+    [notify, settings.showBasemap],
+  );
 
   const resolveMapping = useCallback(
     (mapping: ColumnMapping | null) => {
@@ -322,6 +393,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     markProfilesSaved: () => setProfilesDirty(false),
     profileEditor,
     openProfileEditor: setProfileEditor,
+    makeSnapshot,
+    restoreSession,
+    restoreRequest,
+    requestRestore: setRestoreRequest,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -5,7 +5,7 @@ import { datasetName } from '../lib/dataset';
 import { interactionLabel, PEER_KIND_TH } from '../lib/labels';
 import { slotColor } from '../lib/palette';
 import { fmtDate, fmtDateTime, fmtDuration, fmtTime, isoText } from '../lib/time';
-import type { Interaction } from '../lib/types';
+import { SETTING_LIMITS, type Interaction } from '../lib/types';
 import { fmtInt, pct } from '../lib/util';
 import { ChartCard, EChart } from '../components/Chart';
 import { burstOption } from '../components/charts';
@@ -56,17 +56,20 @@ export function BurstView() {
       </span>
     ) : null;
   };
-  const num = (key: 'burstCount' | 'burstMinutes', min: number, max: number) => ({
-    type: 'number' as const,
-    min,
-    max,
-    value: settings[key],
-    style: { width: 70 },
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      const v = Number(e.target.value);
-      if (Number.isFinite(v) && v >= min && v <= max) setSettings({ [key]: v });
-    },
-  });
+  const num = (key: 'burstCount' | 'burstMinutes') => {
+    const { min, max, int } = SETTING_LIMITS[key];
+    return {
+      type: 'number' as const,
+      min,
+      max,
+      value: settings[key],
+      style: { width: 70 },
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = Number(e.target.value);
+        if (Number.isFinite(v) && v >= min && v <= max && (!int || Number.isInteger(v))) setSettings({ [key]: v });
+      },
+    };
+  };
 
   const total = bursts.reduce((s, b) => s + b.count, 0);
   const densest = bursts.reduce<CallBurst | undefined>((m, b) => (!m || b.count / Math.max(1, b.minutes) > m.count / Math.max(1, m.minutes) ? b : m), undefined);
@@ -190,9 +193,9 @@ export function BurstView() {
       <div className="filters card" role="group" aria-label="เกณฑ์การติดต่อถี่">
         <span className="field inline">
           <span>ติดต่ออย่างน้อย</span>
-          <input className="input" aria-label="จำนวนครั้งขั้นต่ำ" {...num('burstCount', 2, 100)} />
+          <input className="input" aria-label="จำนวนครั้งขั้นต่ำ" {...num('burstCount')} />
           <span>ครั้ง ภายใน</span>
-          <input className="input" aria-label="ภายในกี่นาที" {...num('burstMinutes', 1, 240)} />
+          <input className="input" aria-label="ภายในกี่นาที" {...num('burstMinutes')} />
           <span>นาที</span>
         </span>
         <div className="seg" role="group" aria-label="สิ่งที่นับ">

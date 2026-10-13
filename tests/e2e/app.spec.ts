@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -175,6 +175,112 @@ test('call burst tab: bursts, burst details and bursts of several targets at onc
   expect(errors).toEqual([]);
 });
 
+test('backup menu: the whole session to a password-protected file and back', async ({ page }, testInfo) => {
+  const errors = watchErrors(page);
+  await page.goto(APP);
+  const menuButton = page.getByRole('button', { name: 'สำรอง/กู้ไฟล์' });
+  const menu = page.getByRole('menu', { name: 'สำรองและกู้ไฟล์งาน' });
+  // Nothing to back up on an empty page, but a backup can always be restored.
+  await menuButton.click();
+  await expect(menu.getByRole('menuitem', { name: /สำรองไฟล์/ })).toBeDisabled();
+  await expect(menu.getByRole('menuitem', { name: /กู้ไฟล์/ })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(menuButton).toBeFocused();
+
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  const sidebar = page.getByRole('complementary', { name: 'ไฟล์และการตั้งค่า' });
+  await expect(sidebar.locator('.ds-item')).toHaveCount(3);
+
+  // An alias, a person and a changed setting: all part of the session.
+  await sidebar.getByRole('button', { name: 'ตั้งชื่อเรียก 0810000101' }).click();
+  await sidebar.getByLabel('ชื่อเรียกของเป้าหมาย').fill('นาย ก. (สมมติ)');
+  await sidebar.getByLabel('ชื่อเรียกของเป้าหมาย').press('Enter');
+  await sidebar.getByRole('button', { name: 'ข้อมูลบุคคลของ 0820000202' }).click();
+  const profile = page.getByRole('dialog', { name: /ข้อมูลบุคคลของเลข/ });
+  await profile.getByLabel('ชื่อ (รวมคำนำหน้า)').fill('นายสำรอง');
+  await profile.getByLabel('นามสกุล').fill('ทดสอบ');
+  await profile.getByRole('button', { name: 'บันทึก', exact: true }).click();
+  await expect(sidebar).toContainText('ยังไม่ได้บันทึก');
+  await openTab(page, 'Call burst');
+  await page.getByLabel('จำนวนครั้งขั้นต่ำ').fill('4');
+
+  await menuButton.click();
+  await menu.getByRole('menuitem', { name: /สำรองไฟล์/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'สำรองไฟล์งาน' });
+  await expect(dialog).toContainText('3 เป้าหมาย (ตั้งชื่อเรียก 1)');
+  const save = dialog.getByRole('button', { name: 'บันทึกไฟล์สำรอง' });
+  await dialog.getByLabel('รหัสผ่าน', { exact: true }).fill('ทดสอบ-1234');
+  await expect(save).toBeDisabled();
+  await dialog.getByLabel('ยืนยันรหัสผ่าน').fill('ทดสอบ-1234');
+  await shot(page, '12-backup');
+  const download = page.waitForEvent('download');
+  await save.click();
+  const file = await download;
+  expect(file.suggestedFilename()).toMatch(/^CDR-backup_\d{8}-\d{4}\.cdrbak$/);
+  const path = testInfo.outputPath('session.cdrbak');
+  await file.saveAs(path);
+  const bytes = readFileSync(path);
+  expect(bytes.subarray(0, 6).toString('latin1')).toBe('CDRBAK');
+  expect(bytes.includes(Buffer.from('0810000101'))).toBe(false);
+  await expect(dialog).toHaveCount(0);
+  await expect(sidebar).not.toContainText('ยังไม่ได้บันทึก');
+
+  // A fresh page holds nothing until the backup is opened. Settings are a
+  // browser preference, so put them back first to see the backup restore them.
+  await page.reload();
+  await sidebar.getByText('การตั้งค่าการวิเคราะห์').click();
+  await sidebar.getByRole('button', { name: 'คืนค่าเริ่มต้น' }).click();
+  await expect(sidebar.getByLabel('โทรถี่ ≥ ครั้ง')).toHaveValue('5');
+  // Escape still reaches other parts of the page while no dialog is open.
+  await sidebar.getByText('การตั้งค่าการวิเคราะห์').click();
+
+  const chooser = page.waitForEvent('filechooser');
+  await menuButton.click();
+  await menu.getByRole('menuitem', { name: /กู้ไฟล์/ }).click();
+  await (await chooser).setFiles(path);
+  const restore = page.getByRole('dialog', { name: 'กู้ไฟล์จากไฟล์สำรอง' });
+  await expect(restore).toContainText('มีรหัสผ่าน');
+  await restore.getByLabel('รหัสผ่านของไฟล์สำรอง').fill('wrong password');
+  await restore.getByRole('button', { name: 'เปิดไฟล์' }).click();
+  await expect(restore.getByRole('alert')).toContainText('รหัสผ่านไม่ถูกต้อง');
+  await restore.getByLabel('รหัสผ่านของไฟล์สำรอง').fill('ทดสอบ-1234');
+  await restore.getByLabel('รหัสผ่านของไฟล์สำรอง').press('Enter');
+  await expect(restore).toContainText('3 ราย จาก 3 ไฟล์');
+  await expect(restore).toContainText('นาย ก. (สมมติ)');
+  await shot(page, '13-restore');
+  await restore.getByRole('button', { name: 'กู้ไฟล์', exact: true }).click();
+  await expect(restore).toHaveCount(0);
+
+  await expect(sidebar.locator('.ds-item')).toHaveCount(3);
+  await expect(sidebar).toContainText('นาย ก. (สมมติ)');
+  await expect(sidebar).toContainText('นายสำรอง ทดสอบ');
+  await expect(sidebar).toContainText('ข้อมูลบุคคล (1)');
+  await expect(sidebar).not.toContainText('ยังไม่ได้บันทึก');
+  await expect(sidebar.getByLabel('โทรถี่ ≥ ครั้ง')).toHaveValue('4');
+  for (const name of TABS) await openTab(page, name);
+
+  // A backup dropped on the CDR import area is restored, not read as a table.
+  await page.getByTestId('file-input').setInputFiles(path);
+  await expect(restore).toBeVisible();
+  await restore.getByLabel('รหัสผ่านของไฟล์สำรอง').fill('ทดสอบ-1234');
+  await restore.getByRole('button', { name: 'เปิดไฟล์' }).click();
+  await expect(restore).toContainText('งานที่เปิดอยู่ตอนนี้ (เป้าหมาย 3 ราย');
+  await page.keyboard.press('Escape');
+  await expect(restore).toHaveCount(0);
+  await expect(sidebar.locator('.ds-item')).toHaveCount(3);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await menuButton.click();
+  const box = await menu.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= 390).toBe(true);
+  await menu.getByRole('menuitem', { name: /สำรองไฟล์/ }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await shot(page, 'mobile-backup');
+  await dialog.getByRole('button', { name: 'ยกเลิก' }).click();
+  expect(errors).toEqual([]);
+});
+
 test('excel export downloads a workbook', async ({ page }) => {
   await page.goto(APP);
   await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
@@ -200,6 +306,35 @@ test('real exports load and render every tab', async ({ page }) => {
   for (const name of TABS) {
     await openTab(page, name);
     await shot(page, `real-${name}`);
+  }
+
+  // A backup of the real session restores the same records. The file stays
+  // in Playwright's temporary download folder and goes with the browser.
+  const password = 'local-check-only';
+  await page.getByRole('button', { name: 'สำรอง/กู้ไฟล์' }).click();
+  await page.getByRole('menuitem', { name: /สำรองไฟล์/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'สำรองไฟล์งาน' });
+  await dialog.getByLabel('รหัสผ่าน', { exact: true }).fill(password);
+  await dialog.getByLabel('ยืนยันรหัสผ่าน').fill(password);
+  let started = Date.now();
+  const download = page.waitForEvent('download');
+  await dialog.getByRole('button', { name: 'บันทึกไฟล์สำรอง' }).click();
+  const backup = await (await download).path();
+  console.log(`backup: ${statSync(backup).size.toLocaleString('en-US')} bytes, ${Date.now() - started} ms`);
+  await page.reload();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'สำรอง/กู้ไฟล์' }).click();
+  await page.getByRole('menuitem', { name: /กู้ไฟล์/ }).click();
+  await (await chooser).setFiles(backup);
+  const restore = page.getByRole('dialog', { name: 'กู้ไฟล์จากไฟล์สำรอง' });
+  await restore.getByLabel('รหัสผ่านของไฟล์สำรอง').fill(password);
+  started = Date.now();
+  await restore.getByRole('button', { name: 'เปิดไฟล์' }).click();
+  await restore.getByRole('button', { name: 'กู้ไฟล์', exact: true }).click({ timeout: 60_000 });
+  await expect(sidebar.locator('.ds-item')).toHaveCount(files.length, { timeout: 30_000 });
+  console.log(`restore: ${Date.now() - started} ms`);
+  for (const [i, n] of expected.entries()) {
+    await expect(sidebar.locator('.ds-item').nth(i)).toContainText(`${n.toLocaleString('en-US')} รายการ`);
   }
   expect(errors).toEqual([]);
 });

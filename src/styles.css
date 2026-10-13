@@ -766,6 +766,9 @@ figure.chart {
   height: 520px;
   border-radius: 8px;
   overflow: hidden;
+  /* Leaflet's panes and controls (z-index up to 1000) stay inside the map,
+     below the sticky top bar, its menu and the dialogs. */
+  isolation: isolate;
   border: 1px solid var(--border);
   background: var(--surface-2);
 }
@@ -1273,6 +1276,150 @@ figure.chart {
 @media (max-width: 640px) {
   .profile-grid,
   .profile-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------- backup menu */
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10;
+  width: max-content;
+  min-width: 250px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu.left {
+  right: auto;
+  left: 0;
+}
+
+.menu [role='menuitem'] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.menu [role='menuitem']:hover:not(:disabled),
+.menu [role='menuitem']:focus-visible {
+  background: var(--surface-2);
+}
+
+.menu [role='menuitem']:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.menu [role='menuitem'] strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.menu [role='menuitem'] small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.dialog.backup-dialog {
+  z-index: 911;
+  width: min(580px, calc(100vw - 32px));
+}
+
+.backup-dialog h2 {
+  font-size: 18px;
+}
+
+.backup-dialog .meta {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.backup-summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.backup-summary dt {
+  color: var(--ink-2);
+}
+
+.backup-summary dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.backup-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 4px;
+}
+
+.restore-targets {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.restore-targets li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.backup-password {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backup-password .hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--warn-ink);
+}
+
+@media (max-width: 560px) {
+  .backup-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .backup-summary dd + dt {
+    margin-top: 6px;
+  }
+  .backup-dialog .row2 {
     grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -19,3 +19,6 @@ playwright-report/
 private-data/
 # Person details saved from the app (names, addresses, records, photos).
 CDR-profiles_*.json
+# Backups of a whole session (CDR rows, person details, photos).
+*.cdrbak
+CDR-backup_*

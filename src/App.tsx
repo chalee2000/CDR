@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { exportAnalysisXlsx, exportFileName } from './lib/export/excel';
+import { BackupMenu, RestoreDialog } from './components/Backup';
 import { ContactDrawer } from './components/ContactDrawer';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ColumnMappingDialog, Toasts } from './components/Dialogs';
@@ -43,8 +44,8 @@ function Welcome() {
         </p>
       </div>
       <div className="note">
-        <strong>ข้อมูลไม่ออกจากเครื่องนี้</strong> — ไฟล์ถูกอ่านและวิเคราะห์ในเบราว์เซอร์ทั้งหมด ไม่มีการอัปโหลดไปที่ใด และไม่ถูกบันทึกไว้ (ปิดหน้าแล้วข้อมูลหายไป)
-        การเชื่อมต่ออินเทอร์เน็ตมีเพียงภาพแผนที่ฐาน ซึ่งปิดได้ในการตั้งค่า
+        <strong>ข้อมูลไม่ออกจากเครื่องนี้</strong> — ไฟล์ถูกอ่านและวิเคราะห์ในเบราว์เซอร์ทั้งหมด ไม่มีการอัปโหลดไปที่ใด และไม่ถูกบันทึกไว้ในเบราว์เซอร์ (ปิดหน้าแล้วข้อมูลหายไป
+        — ใช้เมนู "สำรอง/กู้ไฟล์" ด้านบนเพื่อเก็บงานเป็นไฟล์แล้วเปิดทำต่อภายหลัง) การเชื่อมต่ออินเทอร์เน็ตมีเพียงภาพแผนที่ฐาน ซึ่งปิดได้ในการตั้งค่า
       </div>
       <ul className="feature-list">
         <li>
@@ -62,7 +63,8 @@ function Welcome() {
           การอยู่พื้นที่เดียวกัน และ Centrality/Community
         </li>
         <li>
-          <strong>ส่งออก</strong>Excel หลายชีตสำหรับทำรายงาน, CSV ของทุกตาราง, ภาพผังเครือข่าย และพิมพ์/บันทึกเป็น PDF
+          <strong>ส่งออกและสำรองงาน</strong>Excel หลายชีตสำหรับทำรายงาน, CSV ของทุกตาราง, ภาพผังเครือข่าย, พิมพ์/บันทึกเป็น PDF และไฟล์สำรองงานทั้งหมด
+          (ตั้งรหัสผ่านได้) ไว้เปิดทำต่อภายหลัง
         </li>
         <li>
           <strong>ข้อควรระวังในการตีความ</strong>เสาสัญญาณไม่ใช่พิกัด GPS และตัวชี้วัดต่าง ๆ ใช้จัดลำดับสิ่งที่ควรตรวจสอบต่อ ไม่ใช่ข้อสรุปว่าผู้ใดกระทำผิด
@@ -134,6 +136,7 @@ export function App() {
             ประมวลผลในเครื่อง<span className="long"> · ไม่อัปโหลดข้อมูล</span>
           </span>
         </span>
+        <BackupMenu />
         {datasets.length > 0 && (
           <>
             <button className="btn no-print" type="button" onClick={exportXlsx} disabled={exporting}>
@@ -180,6 +183,9 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary label="หน้าต่างข้อมูลบุคคล">
         <ProfileDialog />
+      </ErrorBoundary>
+      <ErrorBoundary label="หน้าต่างกู้ไฟล์">
+        <RestoreDialog />
       </ErrorBoundary>
       <Toasts />
     </div>
