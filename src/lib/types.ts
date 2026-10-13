@@ -11,6 +11,8 @@ export type PeerKind = 'mobile' | 'landline' | 'intl' | 'shortcode' | 'alpha' | 
 export type SourceKind = 'FLAT' | 'VOICE' | 'IMS' | 'VOICE+IMS' | 'SMS' | 'DATA' | 'WIFI';
 export type FormatId = 'ais' | 'dtac' | 'flat';
 export type CoordSource = 'file' | 'import' | 'approx';
+/** The area whose point stands in for a site without coordinates. */
+export type ApproxLevel = 'tumbol' | 'amphur' | 'province';
 
 export interface Cell {
   /** Stable key within a dataset, e.g. "ECI:150900141" or "CELL:SIM0001E_1NB01_S01" (fictitious examples). */

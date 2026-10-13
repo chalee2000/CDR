@@ -1,9 +1,45 @@
 import centroids from '../../assets/province-centroids.json';
+import gazetteer from '../../assets/th-area-centroids.json';
 import { activeInteractions } from '../dataset';
 import { dayKey, DAY, hourOf, isNight, weekdayMon0 } from '../time';
-import type { Cell, CoordSource, Dataset, Interaction, Settings } from '../types';
+import type { ApproxLevel, Cell, CoordSource, Dataset, Interaction, Settings } from '../types';
 
 const CENTROIDS = centroids as unknown as Record<string, [number, number]>;
+/** Province → district → subdistrict → point; '' under a district is the district's own point. */
+const AREAS = (gazetteer as unknown as { areas: Record<string, Record<string, Record<string, [number, number]>>> }).areas;
+
+/** Area names as the gazetteer keys them: no "จังหวัด/อำเภอ/ตำบล/เขต/แขวง" prefix, no spaces (see scripts/build-gazetteer.mjs). */
+export function areaKey(v: string | undefined): string {
+  return String(v ?? '')
+    .trim()
+    .replace(/^(จังหวัด|จ\.|กิ่งอำเภอ|อำเภอ|อ\.|เขต|ตำบล|ต\.|แขวง)\s*/, '')
+    .replace(/\s+/g, '');
+}
+
+/** Lookup by a name from the file: own entries only, never Object.prototype's. */
+function own<T>(table: Record<string, T> | undefined, name: string): T | undefined {
+  return table && Object.hasOwn(table, name) ? table[name] : undefined;
+}
+
+/** The best known point for a cell's area: its subdistrict, else its district, else its province. */
+export function areaPoint(cell: Pick<Cell, 'province' | 'amphur' | 'tumbol'>): { at: [number, number]; level: ApproxLevel; key: string } | undefined {
+  const prov = normalizeProvince(areaKey(cell.province) || undefined);
+  if (!prov) return undefined;
+  const districts = own(AREAS, prov);
+  // "เมือง" alone names the capital district: เมือง + province.
+  const named = areaKey(cell.amphur);
+  const amphur = named === 'เมือง' && !own(districts, named) ? `เมือง${prov}` : named;
+  const tambons = own(districts, amphur);
+  if (tambons) {
+    const tumbol = areaKey(cell.tumbol);
+    const t = tumbol ? own(tambons, tumbol) : undefined;
+    if (t) return { at: t, level: 'tumbol', key: `${prov}|${amphur}|${tumbol}` };
+    const d = own(tambons, '');
+    if (d) return { at: d, level: 'amphur', key: `${prov}|${amphur}` };
+  }
+  const c = own(CENTROIDS, prov);
+  return c ? { at: c, level: 'province', key: prov } : undefined;
+}
 
 export interface SiteLabel {
   key: string;
@@ -24,7 +60,7 @@ export function normalizeProvince(p: string | undefined): string | undefined {
 
 export function provinceCentroid(p: string | undefined): [number, number] | undefined {
   const n = normalizeProvince(p);
-  return n ? CENTROIDS[n] : undefined;
+  return n ? own(CENTROIDS, n) : undefined;
 }
 
 /** Coordinates the user imported for cells that have none in the CDR. */
@@ -44,18 +80,24 @@ export interface Coord {
   lat: number;
   lon: number;
   source: CoordSource;
+  /** For approximate positions: the area whose point was used. */
+  level?: ApproxLevel;
 }
+
+/** Spread of the spiral that keeps several sites of one area apart, in degrees. */
+const SPREAD: Record<ApproxLevel, number> = { tumbol: 0.0025, amphur: 0.006, province: 0.03 };
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 /**
  * Resolves a position for every site: coordinates from the file, then from
- * an imported cell list, then a schematic spot around the province centroid
- * (a deterministic spiral so sites never stack; always labelled approximate).
+ * an imported cell list, then a schematic spot at the site's subdistrict
+ * (else district, else province) point, on a small deterministic spiral so
+ * sites never stack; always labelled approximate.
  */
 export class CoordResolver {
   private approx = new Map<string, Coord>();
-  private perProvince = new Map<string, number>();
+  private perArea = new Map<string, number>();
   constructor(private imported?: ImportedCoords) {}
 
   resolve(cell: Cell): Coord | undefined {
@@ -69,16 +111,16 @@ export class CoordResolver {
     const site = siteLabelOf(cell).key;
     const cached = this.approx.get(site);
     if (cached) return cached;
-    const c = provinceCentroid(cell.province);
-    if (!c) return undefined;
-    const prov = normalizeProvince(cell.province)!;
-    const idx = this.perProvince.get(prov) ?? 0;
-    this.perProvince.set(prov, idx + 1);
-    const r = 0.03 * Math.sqrt(idx);
+    const area = areaPoint(cell);
+    if (!area) return undefined;
+    const idx = this.perArea.get(area.key) ?? 0;
+    this.perArea.set(area.key, idx + 1);
+    const r = SPREAD[area.level] * Math.sqrt(idx);
     const coord: Coord = {
-      lat: c[0] + r * Math.cos(idx * GOLDEN_ANGLE),
-      lon: c[1] + r * Math.sin(idx * GOLDEN_ANGLE),
+      lat: area.at[0] + r * Math.cos(idx * GOLDEN_ANGLE),
+      lon: area.at[1] + r * Math.sin(idx * GOLDEN_ANGLE),
       source: 'approx',
+      level: area.level,
     };
     this.approx.set(site, coord);
     return coord;

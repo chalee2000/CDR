@@ -12,6 +12,7 @@
     "test": "vitest run",
     "make:samples": "tsx scripts/make-samples.ts",
     "make:outline": "node scripts/build-outline.mjs",
+    "make:gazetteer": "node scripts/build-gazetteer.mjs",
     "verify:local": "tsx scripts/verify-local.ts",
     "e2e": "playwright test"
   },

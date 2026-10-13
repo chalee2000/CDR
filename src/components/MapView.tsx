@@ -2,7 +2,9 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import outline from '../assets/region-outline.json';
+import { approxLevelTh } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
+import type { ApproxLevel } from '../lib/types';
 import { escapeHtml } from './download';
 
 export interface MapSite {
@@ -13,6 +15,8 @@ export interface MapSite {
   label: string;
   count: number;
   approx: boolean;
+  /** For approximate positions: the area whose point was used. */
+  approxLevel?: ApproxLevel;
   lines: string[];
   /** square: a position that is NOT the target's (the other party's). */
   shape?: 'circle' | 'square';
@@ -102,7 +106,7 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
       // With a day path on screen the sites recede so the route reads first.
       const opacity = showingPath ? 0.2 : s.approx ? 0.4 : 0.85;
       const tip = `${escapeHtml(s.label)}${s.approx ? ' (ตำแหน่งโดยประมาณ)' : ''}`;
-      const popup = `<strong>${escapeHtml(s.label)}</strong><br>${s.lines.map(escapeHtml).join('<br>')}${s.approx ? '<br><em>ไม่มีพิกัดในไฟล์ — แสดงรอบจุดกลางจังหวัด</em>' : ''}`;
+      const popup = `<strong>${escapeHtml(s.label)}</strong><br>${s.lines.map(escapeHtml).join('<br>')}${s.approx ? `<br><em>ไม่มีพิกัดในไฟล์ — แสดงที่จุดกลาง${approxLevelTh(s.approxLevel)}ตามชื่อพื้นที่ในไฟล์</em>` : ''}`;
       if (s.shape === 'square') {
         const side = Math.round(12 + 12 * Math.sqrt(s.count / maxSquare));
         L.marker([s.lat, s.lon], {
@@ -154,8 +158,10 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
     const framed = own.length ? own : sites;
     const pts: L.LatLngTuple[] = pathPts.length ? pathPts : framed.map((s) => [s.lat, s.lon] as L.LatLngTuple);
     if (pts.length === 0) return;
-    // Approximate (province-centroid) positions must not invite street-level zoom.
-    const maxZoom = framed.length > 0 && framed.every((s) => s.approx) ? 8 : 14;
+    // Approximate positions must not invite street-level zoom: a subdistrict
+    // point allows about town level, a province point only the region.
+    const coarse = framed.length > 0 && framed.every((s) => s.approx);
+    const maxZoom = !coarse ? 14 : framed.some((s) => s.approxLevel === 'province') ? 8 : framed.some((s) => s.approxLevel === 'amphur') ? 10 : 12;
     if (pts.length === 1) m.setView(pts[0], Math.min(12, maxZoom), { animate: false });
     else m.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom, animate: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps

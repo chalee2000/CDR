@@ -1,7 +1,7 @@
 import writeXlsxFile from 'write-excel-file/universal';
 import type { Sheet } from 'write-excel-file/universal';
 import { activeInteractions, datasetName } from '../dataset';
-import { PEER_KIND_TH, SOURCE_TH, imsiBasisTh, imsiUseTh, interactionLabel } from '../labels';
+import { PEER_KIND_TH, SOURCE_TH, approxLevelTh, imsiBasisTh, imsiUseTh, interactionLabel } from '../labels';
 import { isoText } from '../time';
 import type { Dataset, Settings } from '../types';
 import { allBursts, simultaneousBursts, type CallBurst } from '../analysis/bursts';
@@ -45,7 +45,7 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
     sheet: 'เสาสัญญาณ',
     header: ['เป้าหมาย', 'เสา/สถานี', 'ชื่ออังกฤษ', 'ตำบล', 'อำเภอ', 'จังหวัด', 'ละติจูด', 'ลองจิจูด', 'ที่มาของพิกัด', 'เซลล์', 'ครั้ง', 'โทร/SMS', 'Data', 'กลางวัน', 'กลางคืน', 'จำนวนวัน', 'ครั้งแรก', 'ล่าสุด'],
     rows: datasets.flatMap((ds) =>
-      siteStats(ds, settings, resolver).map((s) => [ds.target, s.label, text(s.locationName), text(s.tumbol), text(s.amphur), text(s.province), s.coord?.lat ?? null, s.coord?.lon ?? null, s.coord ? (s.coord.source === 'file' ? 'จากไฟล์' : s.coord.source === 'import' ? 'นำเข้า' : 'ประมาณจากจังหวัด') : '', s.cells.join(', '), s.count, s.commCount, s.dataCount, s.dayCount, s.nightCount, s.days, isoText(s.firstTs), isoText(s.lastTs)]),
+      siteStats(ds, settings, resolver).map((s) => [ds.target, s.label, text(s.locationName), text(s.tumbol), text(s.amphur), text(s.province), s.coord?.lat ?? null, s.coord?.lon ?? null, s.coord ? (s.coord.source === 'file' ? 'จากไฟล์' : s.coord.source === 'import' ? 'นำเข้า' : `ประมาณจาก${approxLevelTh(s.coord.level)}`) : '', s.cells.join(', '), s.count, s.commCount, s.dataCount, s.dayCount, s.nightCount, s.days, isoText(s.firstTs), isoText(s.lastTs)]),
     ),
   });
 

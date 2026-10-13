@@ -51,6 +51,9 @@ test('sample data: every tab renders without errors', async ({ page }) => {
 
   // The other party's positions are squares, the target's circles.
   await openTab(page, 'พื้นที่และการเดินทาง');
+  // AIS files have no cell coordinates: sites sit at their subdistrict's point.
+  await expect(page.getByText(/วางไว้ที่จุดกลางของตำบลตามชื่อพื้นที่ในไฟล์/)).toBeVisible();
+  await expect(page.getByRole('cell', { name: '≈ ตำบล' }).first()).toBeVisible();
   await page.getByRole('group', { name: 'ขอบเขตแผนที่' }).getByRole('button', { name: 'ทุกเป้าหมาย' }).click();
   await expect(page.locator('.peer-square').first()).toBeVisible();
   await page.getByLabel(/ตำแหน่งของคู่สาย/).uncheck();

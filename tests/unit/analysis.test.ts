@@ -7,7 +7,7 @@ import { DEFAULT_SETTINGS, type Dataset, type Interaction } from '../../src/lib/
 import { contactStats } from '../../src/lib/analysis/contacts';
 import { coLocations, commonContacts, directLinks, relayChains, sharedDevices } from '../../src/lib/analysis/cross';
 import { deviceStats } from '../../src/lib/analysis/devices';
-import { CoordResolver, homeWorkCandidates, siteStats, stays } from '../../src/lib/analysis/locations';
+import { areaKey, areaPoint, CoordResolver, homeWorkCandidates, siteStats, stays } from '../../src/lib/analysis/locations';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, egoNetwork } from '../../src/lib/analysis/network';
 import { summarize } from '../../src/lib/analysis/summary';
 import { dailySeries, hourProfile, silences } from '../../src/lib/analysis/temporal';
@@ -71,6 +71,38 @@ describe('per-target analysis', () => {
     const route = stays(C, settings, 'province').map((s) => s.area);
     expect(route).toContain('กรุงเทพมหานคร');
     expect(route).toContain('ชุมพร');
+  });
+
+  it('places sites without coordinates at their subdistrict, else district, else province', () => {
+    expect(areaKey('อำเภอเมืองพัทลุง')).toBe('เมืองพัทลุง');
+    expect(areaKey(' ตำบล บางรัก ')).toBe('บางรัก');
+    expect(areaKey('จ.เชียงราย')).toBe('เชียงราย');
+    expect(areaPoint({ province: 'เชียงราย', amphur: 'แม่สาย', tumbol: 'เวียงพางคำ' })?.level).toBe('tumbol');
+    expect(areaPoint({ province: 'จังหวัดเชียงราย', amphur: 'อำเภอแม่สาย', tumbol: 'ตำบลเวียงพางคำ' })?.key).toBe('เชียงราย|แม่สาย|เวียงพางคำ');
+    expect(areaPoint({ province: 'เชียงราย', amphur: 'แม่สาย', tumbol: 'ตำบลที่ไม่มีอยู่' })?.level).toBe('amphur');
+    expect(areaPoint({ province: 'เชียงราย', amphur: 'อำเภอที่ไม่มีอยู่' })?.level).toBe('province');
+    expect(areaPoint({ province: 'นครสวรรค์', amphur: 'เมือง' })?.key).toBe('นครสวรรค์|เมืองนครสวรรค์');
+    expect(areaPoint({ amphur: 'แม่สาย' })).toBeUndefined();
+    // Names from the file never reach Object.prototype.
+    expect(areaPoint({ province: 'constructor', amphur: 'name', tumbol: 'length' })).toBeUndefined();
+    expect(areaPoint({ province: 'เชียงราย', amphur: 'constructor', tumbol: 'length' })?.level).toBe('province');
+    // Bangkok khwaeng have no points: the khet (district) point stands in.
+    expect(areaPoint({ province: 'กรุงเทพฯ', amphur: 'เขตจตุจักร', tumbol: 'แขวงลาดยาว' })?.key).toBe('กรุงเทพมหานคร|จตุจักร');
+
+    // Sample A (AIS) has no coordinates: each site sits within about 2 km of
+    // its own subdistrict point, and sites of different subdistricts stay apart.
+    const sites = siteStats(A, settings, new CoordResolver());
+    expect(sites.every((s) => s.coord?.source === 'approx' && s.coord.level === 'tumbol')).toBe(true);
+    const km = (a: [number, number], b: [number, number]) => Math.hypot(a[0] - b[0], (a[1] - b[1]) * Math.cos((a[0] * Math.PI) / 180)) * 111.2;
+    for (const s of sites) expect(km([s.coord!.lat, s.coord!.lon], areaPoint(s)!.at)).toBeLessThan(2);
+    const spots = new Set(sites.map((s) => `${s.coord!.lat.toFixed(4)},${s.coord!.lon.toFixed(4)}`));
+    expect(spots.size).toBe(sites.length);
+    // Two sites in one subdistrict do not stack either.
+    const r = new CoordResolver();
+    const one = r.resolve({ key: 'X1', siteName: 'จำลอง1', tumbol: 'เวียงพางคำ', amphur: 'แม่สาย', province: 'เชียงราย' })!;
+    const two = r.resolve({ key: 'X2', siteName: 'จำลอง2', tumbol: 'เวียงพางคำ', amphur: 'แม่สาย', province: 'เชียงราย' })!;
+    expect([one.lat, one.lon]).not.toEqual([two.lat, two.lon]);
+    expect(km([one.lat, one.lon], [two.lat, two.lon])).toBeLessThan(1);
   });
 
   it('tracks handsets: phone change and dual-SIM candidate', () => {

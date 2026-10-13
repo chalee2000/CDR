@@ -43,7 +43,11 @@
 - `A_NUMBER` คือเป้าหมาย และตำแหน่งในแถวของเป้าหมายเป็นของเครื่องเป้าหมาย
 - **เป้าหมายมี IMSI เดียว** คือ IMSI ที่ใช้มากที่สุด ถ้ามี IMSI อื่นในไฟล์ แถวนั้นเป็นของคู่สาย ทั้งพิกัดและ IMEI (ดู [IMSI เดียวต่อเป้าหมาย](#imsi-เดียวต่อเป้าหมาย-ทุกค่าย))
 - ไฟล์ที่มีแถวว่างที่จัดรูปแบบไว้นับล้านแถว (ชีตใหญ่หลายสิบ MB) อ่านได้ตามปกติ
-- ไฟล์ไม่มีพิกัด แผนที่จึงวางเสาไว้รอบจุดกลางจังหวัด และระบุชัดว่าเป็น "ตำแหน่งโดยประมาณ"
+- ไฟล์ไม่มีพิกัด แผนที่จึงวางเสาที่**จุดกลางตำบล**ตามชื่อพื้นที่ในไฟล์ (`PROVINCE`, `AMPHUR`, `TUMBOL`) และระบุชัดว่าเป็น "ตำแหน่งโดยประมาณ"
+  - ถ้าไม่พบชื่อตำบล ใช้จุดกลางอำเภอ (กรุงเทพฯ ใช้จุดกลางเขต เพราะข้อมูลต้นทางไม่มีจุดของแขวง) และถ้าไม่พบอีกจึงใช้จุดกลางจังหวัด
+  - คอลัมน์ "พิกัด" ในตารางเสาบอกระดับที่ใช้: "≈ ตำบล" / "≈ อำเภอ" / "≈ จังหวัด"
+  - หลายเสาในพื้นที่เดียวกันวางห่างกันเล็กน้อยเพื่อไม่ให้ซ้อนกัน
+  - จุดกลางเป็นจุดกลางพื้นที่ ไม่ใช่ตำแหน่งเสา
   - ถ้ามีไฟล์พิกัดเสา ให้นำเข้าได้ที่ **การตั้งค่า → พิกัดเสาเพิ่มเติม** เป็น CSV ที่มีคอลัมน์ `ECI` หรือ `CELL_ID` หรือ `SITE_NAME` และ `LAT`, `LON`
 
 ### True / DTAC แบบหลายชีต
@@ -146,6 +150,7 @@ npm test             # unit test (vitest)
 npm run build        # สร้าง dist/index.html ไฟล์เดียว
 npm run e2e          # ทดสอบในเบราว์เซอร์ด้วย Playwright (ต้อง build ก่อน)
 npm run make:samples # สร้างไฟล์ตัวอย่างใน samples/ ใหม่
+npm run make:gazetteer # สร้างจุดกลางตำบล/อำเภอ (src/assets/th-area-centroids.json) ใหม่จากข้อมูลต้นทาง
 ```
 
 ตรวจตัวเลขกับไฟล์จริงของตัวเองได้โดยไม่ต้องนำไฟล์เข้ามาใน repository:
@@ -167,6 +172,39 @@ src/components/     ตาราง กราฟ (ECharts) แผนที่ (L
 tests/unit/         unit test
 tests/e2e/          ทดสอบในเบราว์เซอร์
 ```
+
+## ข้อมูลพื้นที่ที่ใช้ในแอป
+
+- **จุดกลางตำบลและชื่อพื้นที่**: [kongvut/thai-province-data](https://github.com/kongvut/thai-province-data) — MIT License, Copyright (c) 2025 Kongvut Sangkla
+- **ขอบเขตอำเภอ** (ใช้หาจุดกลางอำเภอ และตัดจุดตำบลที่อยู่นอกอำเภอของตัวเอง เช่น จุดที่ตกทะเล): [geoBoundaries](https://www.geoboundaries.org) THA ADM2 จากกรมแผนที่ทหารและ OCHA ROAP — CC BY 3.0 IGO
+- **เส้นขอบประเทศแบบออฟไลน์**: Natural Earth (public domain)
+
+<details>
+<summary>MIT License ของ kongvut/thai-province-data</summary>
+
+```
+Copyright (c) 2025 Kongvut Sangkla
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+</details>
 
 ## การเปิด GitHub Pages
 

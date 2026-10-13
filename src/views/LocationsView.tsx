@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { CoordResolver, homeWorkCandidates, locatedDays, pathPoints, peerSites, siteStats, stays, type AreaLevel, type SiteStat, type Stay } from '../lib/analysis/locations';
+import { approxLevelTh } from '../lib/labels';
 import { fmtDate, fmtDateTime, fmtHours, fmtTime, isoText } from '../lib/time';
 import { fmtInt, pct } from '../lib/util';
 import { DataTable, type Column } from '../components/DataTable';
@@ -42,6 +43,7 @@ export function LocationsView() {
               label: s.label,
               count: s.count,
               approx: s.coord!.source === 'approx',
+              approxLevel: s.coord!.level,
               shape: 'square' as const,
               lines: [
                 `ตำแหน่งของคู่สาย — ไม่ใช่ตำแหน่งของเป้าหมาย ${d.target}`,
@@ -64,6 +66,7 @@ export function LocationsView() {
           label: s.label,
           count: s.count,
           approx: s.coord!.source === 'approx',
+          approxLevel: s.coord!.level,
           lines: [
             `เป้าหมาย ${d.target}`,
             [s.tumbol, s.amphur, s.province].filter(Boolean).join(' · '),
@@ -98,7 +101,7 @@ export function LocationsView() {
     { key: 'first', header: 'ครั้งแรก', render: (s) => <span className="nowrap">{fmtDateTime(s.firstTs, y)}</span>, sortValue: (s) => s.firstTs, csv: (s) => isoText(s.firstTs) },
     { key: 'last', header: 'ล่าสุด', render: (s) => <span className="nowrap">{fmtDateTime(s.lastTs, y)}</span>, sortValue: (s) => s.lastTs, csv: (s) => isoText(s.lastTs) },
     { key: 'cells', header: 'เซลล์', render: (s) => <span className="mono">{s.cells.slice(0, 4).join(', ')}{s.cells.length > 4 ? ` +${s.cells.length - 4}` : ''}</span>, csv: (s) => s.cells.join(' ') },
-    { key: 'coord', header: 'พิกัด', render: (s) => (s.coord ? (s.coord.source === 'file' ? 'จากไฟล์' : s.coord.source === 'import' ? 'นำเข้า' : '≈ จังหวัด') : '-'), sortValue: (s) => s.coord?.source },
+    { key: 'coord', header: 'พิกัด', render: (s) => (s.coord ? (s.coord.source === 'file' ? 'จากไฟล์' : s.coord.source === 'import' ? 'นำเข้า' : `≈ ${approxLevelTh(s.coord.level)}`) : '-'), sortValue: (s) => s.coord?.source },
   ];
   const siteCols = hasData ? siteColsAll : siteColsAll.filter((c) => c.key !== 'comm' && c.key !== 'data');
   const stayCols: Column<Stay>[] = [
@@ -159,7 +162,12 @@ export function LocationsView() {
         </div>
         <MapView sites={mapSites} paths={paths} showBasemap={settings.showBasemap} mode={mode} fitKey={`${scope}|${ds.id}|${day}|${coordImport?.name ?? ''}`} />
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {approx && <Caveat>ไฟล์นี้ไม่มีพิกัดเสา วงกลมสีอ่อนจึงวางไว้รอบจุดกลางจังหวัดเพื่อบอกว่าอยู่จังหวัดใด ไม่ใช่ตำแหน่งจริงของเสา (นำเข้าไฟล์พิกัดเสาได้ที่การตั้งค่า)</Caveat>}
+          {approx && (
+            <Caveat>
+              ไฟล์นี้ไม่มีพิกัดเสา วงกลมสีอ่อนจึงวางไว้ที่จุดกลางของตำบลตามชื่อพื้นที่ในไฟล์ (ถ้าไม่พบตำบลใช้อำเภอ แล้วจึงจังหวัด) เพื่อบอกพื้นที่ ไม่ใช่ตำแหน่งจริงของเสา
+              (นำเข้าไฟล์พิกัดเสาได้ที่การตั้งค่า)
+            </Caveat>
+          )}
           {missing > 0 && <Caveat>{missing} เสาไม่มีข้อมูลจังหวัดหรือพิกัด จึงไม่แสดงบนแผนที่</Caveat>}
           {day && dayPath.length === 0 && <Caveat>วันที่เลือกไม่มีตำแหน่งที่แสดงบนแผนที่ได้</Caveat>}
           {peerCount > 0 && (

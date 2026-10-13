@@ -1,4 +1,4 @@
-import type { ImsiCheck, Direction, Interaction, PeerKind, Service } from './types';
+import type { ApproxLevel, ImsiCheck, Direction, Interaction, PeerKind, Service } from './types';
 
 export const WEEKDAYS_TH = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
 export const WEEKDAYS_SHORT_TH = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
@@ -83,4 +83,9 @@ export function imsiBasisTh(c: Pick<ImsiCheck, 'basis' | 'auto'>): string {
 export function imsiUseTh(c: Pick<ImsiCheck, 'owner' | 'number'>): string {
   if (c.owner === 'target') return 'ตำแหน่งของเป้าหมาย';
   return c.number ? `ตำแหน่งของ ${c.number} (ไม่นับเป็นของเป้าหมาย)` : 'ไม่นับเป็นตำแหน่งของเป้าหมาย';
+}
+
+/** The area an approximate position stands for: ตำบล / อำเภอ / จังหวัด. */
+export function approxLevelTh(level: ApproxLevel | undefined): string {
+  return level === 'tumbol' ? 'ตำบล' : level === 'amphur' ? 'อำเภอ' : 'จังหวัด';
 }
