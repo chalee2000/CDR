@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { CoordResolver, homeWorkCandidates, locatedDays, pathPoints, peerSites, siteStats, stays, type AreaLevel, type SiteStat, type Stay } from '../lib/analysis/locations';
 import { approxLevelTh } from '../lib/labels';
+import { personName } from '../lib/profiles';
 import { fmtDate, fmtDateTime, fmtHours, fmtTime, isoText } from '../lib/time';
 import { fmtInt, pct } from '../lib/util';
 import { DataTable, type Column } from '../components/DataTable';
@@ -9,7 +10,7 @@ import { Caveat, DatasetPicker, Kpi, Section, Swatch } from '../components/bits'
 import { useEffectiveTheme, useStore } from '../state/store';
 
 export function LocationsView() {
-  const { selected: ds, datasets, settings, coordImport } = useStore();
+  const { selected: ds, datasets, settings, coordImport, profiles } = useStore();
   const mode = useEffectiveTheme();
   const [scope, setScope] = useState<'one' | 'all'>('one');
   const [day, setDay] = useState('');
@@ -29,6 +30,11 @@ export function LocationsView() {
 
   const mapSites: MapSite[] = useMemo(() => {
     const list = scope === 'all' ? datasets : ds ? [ds] : [];
+    // A number followed by the name typed in for it, when there is one.
+    const named = (n: string) => {
+      const name = personName(profiles[n]);
+      return name ? `${n} ${name}` : n;
+    };
     // The other party's positions (squares) go first, under the target's own.
     const others: MapSite[] = !showPeers
       ? []
@@ -46,8 +52,8 @@ export function LocationsView() {
               approxLevel: s.coord!.level,
               shape: 'square' as const,
               lines: [
-                `ตำแหน่งของคู่สาย — ไม่ใช่ตำแหน่งของเป้าหมาย ${d.target}`,
-                `คู่สาย: ${s.peers.slice(0, 5).map((p) => `${p.peer} (${p.count.toLocaleString('th-TH')})`).join(', ')}${s.peers.length > 5 ? ` และอีก ${s.peers.length - 5} เลข` : ''}`,
+                `ตำแหน่งของคู่สาย — ไม่ใช่ตำแหน่งของเป้าหมาย ${named(d.target)}`,
+                `คู่สาย: ${s.peers.slice(0, 5).map((p) => [`${p.peer} (${p.count.toLocaleString('th-TH')})`, personName(profiles[p.peer])].filter(Boolean).join(' ')).join(', ')}${s.peers.length > 5 ? ` และอีก ${s.peers.length - 5} เลข` : ''}`,
                 [s.tumbol, s.amphur, s.province].filter(Boolean).join(' · '),
                 `${s.count.toLocaleString('th-TH')} รายการ` + (s.inferred ? ` (${s.inferred.toLocaleString('th-TH')} รายการมาจากแถว IMS ของเป้าหมายที่ไม่มี IMEI — น่าจะเป็นตำแหน่งฝั่งคู่สาย)` : ' (จากแถวที่ IMSI เป็นของคู่สาย)'),
                 `ครั้งแรก ${fmtDateTime(s.firstTs, settings.yearStyle)}`,
@@ -68,7 +74,7 @@ export function LocationsView() {
           approx: s.coord!.source === 'approx',
           approxLevel: s.coord!.level,
           lines: [
-            `เป้าหมาย ${d.target}`,
+            `เป้าหมาย ${named(d.target)}`,
             [s.tumbol, s.amphur, s.province].filter(Boolean).join(' · '),
             `${s.count.toLocaleString('th-TH')} รายการ (${s.days} วัน) · กลางคืน ${s.nightCount.toLocaleString('th-TH')}`,
             `ครั้งแรก ${fmtDateTime(s.firstTs, settings.yearStyle)}`,
@@ -76,7 +82,7 @@ export function LocationsView() {
           ],
         })),
     ));
-  }, [scope, datasets, ds, sitesById, peerById, showPeers, settings.yearStyle]);
+  }, [scope, datasets, ds, sitesById, peerById, showPeers, settings.yearStyle, profiles]);
 
   const paths: MapPath[] = useMemo(
     () => (ds && dayPath.length ? [{ slot: ds.slot, points: dayPath.map((p) => ({ lat: p.lat, lon: p.lon, label: p.label, time: fmtTime(p.ts) })) }] : []),

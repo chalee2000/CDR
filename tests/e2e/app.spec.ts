@@ -56,6 +56,21 @@ test('sample data: every tab renders without errors', async ({ page }) => {
   await expect(page.getByRole('cell', { name: '≈ ตำบล' }).first()).toBeVisible();
   await page.getByRole('group', { name: 'ขอบเขตแผนที่' }).getByRole('button', { name: 'ทุกเป้าหมาย' }).click();
   await expect(page.locator('.peer-square').first()).toBeVisible();
+  // A name typed in for the other party shows next to its number.
+  await page.locator('.peer-square').first().click({ force: true });
+  const popup = page.locator('.leaflet-popup-content');
+  const peerNo = /คู่สาย: (\S+) \(/.exec(await popup.innerText())![1];
+  await page.getByTestId('profiles-input').setInputFiles({
+    name: 'profiles.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ format: 'cdr-analyzer/profiles', version: 1, profiles: [{ number: peerNo, firstName: 'นายสมมติ', lastName: 'คู่สายทดสอบ' }] })),
+  });
+  await page.locator('.peer-square').first().click({ force: true });
+  // The popup of the redrawn square replaces the old one, which fades out.
+  await expect(popup).toHaveCount(1);
+  await expect(popup).toContainText(`${peerNo} (`);
+  await expect(popup).toContainText('นายสมมติ คู่สายทดสอบ');
+  await page.keyboard.press('Escape');
   await page.getByLabel(/ตำแหน่งของคู่สาย/).uncheck();
   await expect(page.locator('.peer-square')).toHaveCount(0);
 
