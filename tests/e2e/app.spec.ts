@@ -49,6 +49,13 @@ test('sample data: every tab renders without errors', async ({ page }) => {
     await shot(page, `${String(i + 1).padStart(2, '0')}-${name}`);
   }
 
+  // The other party's positions are squares, the target's circles.
+  await openTab(page, 'พื้นที่และการเดินทาง');
+  await page.getByRole('group', { name: 'ขอบเขตแผนที่' }).getByRole('button', { name: 'ทุกเป้าหมาย' }).click();
+  await expect(page.locator('.peer-square').first()).toBeVisible();
+  await page.getByLabel(/ตำแหน่งของคู่สาย/).uncheck();
+  await expect(page.locator('.peer-square')).toHaveCount(0);
+
   // True/DTAC: which SIM wrote each row, and whose positions they are.
   await openTab(page, 'ภาพรวม');
   const sims = page.getByRole('table', { name: 'ตรวจเจ้าของพิกัดจาก IMSI' });

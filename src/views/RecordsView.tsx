@@ -47,7 +47,7 @@ export function RecordsView() {
     { key: 'area', header: 'อำเภอ / จังหวัด', render: (i) => [i.targetObs?.cell?.amphur, i.targetObs?.cell?.province].filter(Boolean).join(' · ') || '-', sortValue: (i) => `${i.targetObs?.cell?.province ?? ''}${i.targetObs?.cell?.amphur ?? ''}` },
     { key: 'cell', header: 'เซลล์', render: (i) => <span className="mono">{i.targetObs?.cell?.cellId ?? '-'}</span>, sortValue: (i) => i.targetObs?.cell?.cellId },
     { key: 'imei', header: 'IMEI', render: (i) => <span className="mono">{i.targetObs?.imei ?? '-'}</span>, sortValue: (i) => i.targetObs?.imei },
-    { key: 'peerSite', header: 'เสาของคู่สาย', render: (i) => (i.peerObs?.cell ? siteLabelOf(i.peerObs.cell).label : ''), sortValue: (i) => (i.peerObs?.cell ? siteLabelOf(i.peerObs.cell).label : undefined) },
+    { key: 'peerSite', header: 'เสาของคู่สาย', render: (i) => (i.peerObs?.cell ? siteLabelOf(i.peerObs.cell).label + (i.peerCellInferred ? ' (จากแถว IMS ไม่มี IMEI)' : '') : ''), sortValue: (i) => (i.peerObs?.cell ? siteLabelOf(i.peerObs.cell).label : undefined) },
     { key: 'src', header: 'แหล่ง', render: (i) => SOURCE_TH[i.source], sortValue: (i) => i.source },
     {
       key: 'row',

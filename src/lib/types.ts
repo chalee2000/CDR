@@ -58,6 +58,12 @@ export interface Interaction {
   targetObs?: Observation;
   /** Position/device of the OTHER party, when the file includes their record (DTAC on-net). */
   peerObs?: Observation;
+  /**
+   * The peer-side cell was taken from an IMS row that carries the target's
+   * IMSI but no IMEI: such rows record a position away from the target's
+   * handset (the far end of the call), so it is not counted as the target's.
+   */
+  peerCellInferred?: boolean;
   bytes?: number;
   ip?: string;
   /** Source rows as "Sheet!row" (1-based Excel row numbers, header = row 1). */

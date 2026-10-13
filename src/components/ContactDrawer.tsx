@@ -78,7 +78,7 @@ export function ContactDrawer() {
     { key: 'type', header: 'ประเภท (มุมมองเป้าหมาย)', render: (e) => interactionLabel(e.it), sortValue: (e) => interactionLabel(e.it) },
     { key: 'dur', header: 'ระยะเวลา', num: true, render: (e) => (e.it.service === 'call' ? fmtDuration(e.it.durationSec) : '-'), sortValue: (e) => e.it.durationSec },
     { key: 'site', header: 'เสาของเป้าหมาย', render: (e) => (e.it.targetObs?.cell ? siteLabelOf(e.it.targetObs.cell).label : '-'), sortValue: (e) => (e.it.targetObs?.cell ? siteLabelOf(e.it.targetObs.cell).label : undefined) },
-    { key: 'psite', header: 'เสาของเลขนี้', render: (e) => (e.it.peerObs?.cell ? siteLabelOf(e.it.peerObs.cell).label : ''), sortValue: (e) => (e.it.peerObs?.cell ? siteLabelOf(e.it.peerObs.cell).label : undefined) },
+    { key: 'psite', header: 'เสาของเลขนี้', render: (e) => (e.it.peerObs?.cell ? siteLabelOf(e.it.peerObs.cell).label + (e.it.peerCellInferred ? ' (จากแถว IMS ไม่มี IMEI)' : '') : ''), sortValue: (e) => (e.it.peerObs?.cell ? siteLabelOf(e.it.peerObs.cell).label : undefined) },
     { key: 'row', header: 'แถวในไฟล์', render: (e) => <span className="mono">{e.it.rowRefs.join(', ')}</span>, csv: (e) => e.it.rowRefs.join(' ') },
   ];
 

@@ -131,7 +131,7 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
     rows: datasets.flatMap((ds) =>
       activeInteractions(ds, settings).map((it) => {
         const c = it.targetObs?.cell;
-        return [ds.target, isoText(it.ts), interactionLabel(it), text(it.peer), it.peer ? PEER_KIND_TH[it.peerKind] : '', text(it.peerRaw), it.durationSec ?? null, it.bytes ?? null, c ? siteLabelOf(c).label : '', text(c?.amphur), text(c?.province), text(c?.cellId), text(it.targetObs?.imei), text(it.targetObs?.imsi), it.peerObs?.cell ? siteLabelOf(it.peerObs.cell).label : '', SOURCE_TH[it.source], it.rowRefs.join(', '), it.dupOfPrev ? 'ใช่' : ''];
+        return [ds.target, isoText(it.ts), interactionLabel(it), text(it.peer), it.peer ? PEER_KIND_TH[it.peerKind] : '', text(it.peerRaw), it.durationSec ?? null, it.bytes ?? null, c ? siteLabelOf(c).label : '', text(c?.amphur), text(c?.province), text(c?.cellId), text(it.targetObs?.imei), text(it.targetObs?.imsi), it.peerObs?.cell ? siteLabelOf(it.peerObs.cell).label + (it.peerCellInferred ? ' (จากแถว IMS ไม่มี IMEI)' : '') : '', SOURCE_TH[it.source], it.rowRefs.join(', '), it.dupOfPrev ? 'ใช่' : ''];
       }),
     ),
   });

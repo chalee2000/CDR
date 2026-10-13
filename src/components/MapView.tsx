@@ -14,6 +14,8 @@ export interface MapSite {
   count: number;
   approx: boolean;
   lines: string[];
+  /** square: a position that is NOT the target's (the other party's). */
+  shape?: 'circle' | 'square';
 }
 
 export interface MapPath {
@@ -33,7 +35,8 @@ interface Props {
 /**
  * Leaflet map. An offline outline of Thailand and its neighbours sits in a
  * pane BELOW the tiles, so it shows whenever tiles are off or unreachable.
- * Markers are vector circles (no image assets) with a surface-coloured ring.
+ * Markers are vector circles (no image assets) with a surface-coloured ring;
+ * positions that are not the target's are squares.
  */
 export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
   const el = useRef<HTMLDivElement>(null);
@@ -92,11 +95,29 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
     g.clearLayers();
     const c = CHROME[mode];
     const showingPath = paths.some((p) => p.points.length > 0);
-    const max = Math.max(1, ...sites.map((s) => s.count));
+    const max = Math.max(1, ...sites.filter((s) => s.shape !== 'square').map((s) => s.count));
+    const maxSquare = Math.max(1, ...sites.filter((s) => s.shape === 'square').map((s) => s.count));
     for (const s of sites) {
       const color = slotColor(s.slot, mode);
       // With a day path on screen the sites recede so the route reads first.
       const opacity = showingPath ? 0.2 : s.approx ? 0.4 : 0.85;
+      const tip = `${escapeHtml(s.label)}${s.approx ? ' (ตำแหน่งโดยประมาณ)' : ''}`;
+      const popup = `<strong>${escapeHtml(s.label)}</strong><br>${s.lines.map(escapeHtml).join('<br>')}${s.approx ? '<br><em>ไม่มีพิกัดในไฟล์ — แสดงรอบจุดกลางจังหวัด</em>' : ''}`;
+      if (s.shape === 'square') {
+        const side = Math.round(12 + 12 * Math.sqrt(s.count / maxSquare));
+        L.marker([s.lat, s.lon], {
+          icon: L.divIcon({
+            className: 'peer-square',
+            iconSize: [side, side],
+            html: `<span style="background:${color};opacity:${showingPath ? 0.3 : s.approx ? 0.5 : 0.9};border-color:${c.surface}"></span>`,
+          }),
+          keyboard: false,
+        })
+          .bindTooltip(`■ ${tip} — ตำแหน่งของคู่สาย`)
+          .bindPopup(popup)
+          .addTo(g);
+        continue;
+      }
       L.circleMarker([s.lat, s.lon], {
         radius: 5 + 13 * Math.sqrt(s.count / max),
         color: c.surface,
@@ -104,8 +125,8 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
         fillColor: color,
         fillOpacity: opacity,
       })
-        .bindTooltip(`${escapeHtml(s.label)}${s.approx ? ' (ตำแหน่งโดยประมาณ)' : ''}`)
-        .bindPopup(`<strong>${escapeHtml(s.label)}</strong><br>${s.lines.map(escapeHtml).join('<br>')}${s.approx ? '<br><em>ไม่มีพิกัดในไฟล์ — แสดงรอบจุดกลางจังหวัด</em>' : ''}`)
+        .bindTooltip(tip)
+        .bindPopup(popup)
         .addTo(g);
     }
     for (const p of paths) {
@@ -128,10 +149,13 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
     if (!m) return;
     // A selected day's route takes the frame; otherwise every site.
     const pathPts = paths.flatMap((p) => p.points.map((x) => [x.lat, x.lon] as L.LatLngTuple));
-    const pts: L.LatLngTuple[] = pathPts.length ? pathPts : sites.map((s) => [s.lat, s.lon] as L.LatLngTuple);
+    // The target's own positions set the frame; the other party's only when there are none.
+    const own = sites.filter((s) => s.shape !== 'square');
+    const framed = own.length ? own : sites;
+    const pts: L.LatLngTuple[] = pathPts.length ? pathPts : framed.map((s) => [s.lat, s.lon] as L.LatLngTuple);
     if (pts.length === 0) return;
     // Approximate (province-centroid) positions must not invite street-level zoom.
-    const maxZoom = sites.length > 0 && sites.every((s) => s.approx) ? 8 : 14;
+    const maxZoom = framed.length > 0 && framed.every((s) => s.approx) ? 8 : 14;
     if (pts.length === 1) m.setView(pts[0], Math.min(12, maxZoom), { animate: false });
     else m.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom, animate: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -271,3 +271,46 @@ export function pathPoints(ds: Dataset, settings: Settings, resolver: CoordResol
 export function locatedDays(ds: Dataset, settings: Settings): string[] {
   return [...new Set(targetLocated(ds, settings).map((it) => dayKey(it.ts)))].sort();
 }
+
+/** A cell where the file places the OTHER party of a target's communication. */
+export interface PeerSite {
+  key: string;
+  label: string;
+  tumbol?: string;
+  amphur?: string;
+  province?: string;
+  coord?: Coord;
+  count: number;
+  /** Of which inferred from the target's IMS rows without an IMEI. */
+  inferred: number;
+  /** Parties seen at this cell, most frequent first. */
+  peers: { peer: string; count: number }[];
+  firstTs: number;
+  lastTs: number;
+}
+
+/**
+ * Positions that are NOT the target's: the peer's own rows (another SIM on
+ * the same network) and the far end recorded in IMS rows without an IMEI.
+ */
+export function peerSites(ds: Dataset, settings: Settings, resolver?: CoordResolver): PeerSite[] {
+  const map = new Map<string, PeerSite & { _peers: Map<string, number> }>();
+  for (const it of activeInteractions(ds, settings)) {
+    const cell = it.peerObs?.cell;
+    if (!cell) continue;
+    const { key, label } = siteLabelOf(cell);
+    let s = map.get(key);
+    if (!s) {
+      s = { key, label, tumbol: cell.tumbol, amphur: cell.amphur, province: cell.province, coord: resolver?.resolve(cell), count: 0, inferred: 0, peers: [], firstTs: it.ts, lastTs: it.ts, _peers: new Map() };
+      map.set(key, s);
+    }
+    s.count++;
+    if (it.peerCellInferred) s.inferred++;
+    if (it.peer) s._peers.set(it.peer, (s._peers.get(it.peer) ?? 0) + 1);
+    s.firstTs = Math.min(s.firstTs, it.ts);
+    s.lastTs = Math.max(s.lastTs, it.ts);
+  }
+  return [...map.values()]
+    .map(({ _peers, ...s }) => ({ ...s, peers: [..._peers].map(([peer, count]) => ({ peer, count })).sort((a, b) => b.count - a.count) }))
+    .sort((a, b) => b.count - a.count);
+}

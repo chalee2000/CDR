@@ -177,6 +177,32 @@ describe('DTAC multi-sheet layout', () => {
     expect(locked.meta.imsiCheck!.find((x) => x.imsi === OLD)).toMatchObject({ owner: 'target', basis: 'data', inData: true });
   });
 
+  it('keeps the far-end cell of IMS rows without an IMEI out of the target positions', () => {
+    // As in real exports: the target's IMS rows without an IMEI place the call in another province.
+    const sheets = wbC.sheets.map((sh) => {
+      if (!/^IMS/.test(sh.name)) return sh;
+      const head = sh.rows[0] as string[];
+      const col = (n: string) => head.findIndex((h) => String(h).toUpperCase() === n);
+      const [ii, ie, ip, la, lo] = [col('IMSI'), col('IMEI'), col('PROVINCE'), col('LATITUDE'), col('LONGITUDE')];
+      return {
+        ...sh,
+        rows: sh.rows.map((r, k) =>
+          k > 0 && r[ii] === OLD && k % 2 === 0 ? r.map((v, j) => (j === ie ? null : j === ip ? 'ปลายสายทดสอบ' : j === la ? '18.79' : j === lo ? '98.98' : v)) : r,
+        ),
+      };
+    });
+    const [d] = drafts(parseWorkbook({ ...wbC, sheets }, 'local'));
+    expect(d.interactions.some((i) => i.targetObs?.cell?.province === 'ปลายสายทดสอบ')).toBe(false);
+    const far = d.interactions.filter((i) => i.peerCellInferred);
+    expect(far.length).toBeGreaterThan(0);
+    expect(far.every((i) => i.peerObs?.cell?.province === 'ปลายสายทดสอบ')).toBe(true);
+    // The target's own record of these calls stays the target's (SIM and handset), only the cell moves.
+    expect(far.every((i) => i.targetObs?.imsi === OLD && !i.targetObs.cell)).toBe(true);
+    expect(d.meta.notes.some((n) => n.includes('ไม่มี IMEI'))).toBe(true);
+    // Nothing else moves: the same communications as before.
+    expect(d.interactions.length).toBe(c.interactions.length);
+  });
+
   it('never puts a peer handset (IMEI) among the target devices', () => {
     const peerImeis = new Set(c.interactions.map((i) => i.peerObs?.imei).filter(Boolean));
     const targetImeis = new Set(c.interactions.map((i) => i.targetObs?.imei).filter(Boolean));

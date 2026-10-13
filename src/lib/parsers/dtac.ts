@@ -78,6 +78,12 @@ interface CommRec {
   roleSide: 'A' | 'B';
   owner: 'target' | 'peer';
   obs: Observation;
+  /**
+   * Cell of an IMS row without an IMEI. Such rows are not written from the
+   * handset's radio context: when they carry the target's IMSI their cell
+   * lies away from the target (the far end of the call), so it is kept apart.
+   */
+  farCell?: Cell;
   duration?: number;
   answered: boolean;
   access?: string;
@@ -258,7 +264,8 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
       if (imsi) obs.imsi = imsi;
       if (imei) obs.imei = imei;
       const cell = cellFrom(row, col);
-      if (cell) obs.cell = cell;
+      const farCell = kind === 'IMS' && !imei ? cell : undefined;
+      if (cell && !farCell) obs.cell = cell;
       const sideKey = roleSide === 'A' ? a.key : b.key;
       if (imsi && sideKey === target) roleOwnedImsis.push(imsi);
       const media = clean(g(row, 'MEDIA TYPE'));
@@ -276,6 +283,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
         roleSide,
         owner: 'peer', // resolved below once the target IMSIs are known
         obs,
+        ...(farCell ? { farCell } : {}),
         duration,
         answered: duration !== undefined && duration > 0,
         access: clean(g(row, 'ACCESSNETWORKINFO')),
@@ -290,7 +298,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
   // SIM is a same-network peer's leg, and its cell is the peer's position.
   for (const r of comm) {
     if (!r.obs.imsi) continue;
-    const t = tallySim(sims, r.obs.imsi, r.ts, !!r.obs.cell, r.obs.imei);
+    const t = tallySim(sims, r.obs.imsi, r.ts, !!(r.obs.cell ?? r.farCell), r.obs.imei);
     // A forwarding record is written by the network, not by a handset on either side.
     if (r.kind === 'VOICE' && r.type.toUpperCase() === 'CF') continue;
     const sideKey = r.roleSide === 'A' ? r.a.key : r.b.key;
@@ -342,11 +350,18 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     manual++;
   }
 
+  let farCells = 0;
   const byRole = { target: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity }, peer: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity } };
   for (const r of comm) {
     const sideKey = r.roleSide === 'A' ? r.a.key : r.b.key;
     r.owner = r.obs.imsi ? (targetImsis.has(r.obs.imsi) ? 'target' : 'peer') : sideKey === target ? 'target' : 'peer';
     const st = statOf.get(r.kind)!;
+    // A peer's own row: whatever its cell, it is the peer's position.
+    if (r.owner === 'peer' && r.farCell) {
+      r.obs.cell = r.farCell;
+      delete r.farCell;
+    }
+    if (r.farCell) farCells++;
     if (!r.obs.cell) st.noLocation++;
     if (r.owner === 'peer') st.peerOwned++;
     if (!r.obs.imsi) {
@@ -462,6 +477,12 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     const pObs = pickObs(theirs);
     if (tObs) it.targetObs = tObs;
     if (pObs) it.peerObs = pObs;
+    // The far end of the call as seen in the target's IMS rows without an IMEI.
+    const far = mine.find((r) => r.farCell)?.farCell;
+    if (far && !it.peerObs?.cell) {
+      it.peerObs = { ...it.peerObs, cell: far };
+      it.peerCellInferred = true;
+    }
     if (g.every((r) => r.dup)) it.dupOfPrev = true;
     const access = g.find((r) => r.access)?.access;
     if (access) it.extra = { 'เครือข่าย': access };
@@ -613,6 +634,11 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
   }
   if (manual > 0) {
     notes.push(`ผู้ใช้กำหนดเจ้าของ IMSI เอง ${manual} ค่า (แทนผลที่ระบบตัดสิน) พิกัดและเครื่องของซิมเหล่านี้นับตามที่กำหนด`);
+  }
+  if (farCells > 0) {
+    notes.push(
+      `แถว IMS ที่ใช้ IMSI ของเป้าหมายแต่ไม่มี IMEI ${farCells.toLocaleString('th-TH')} แถวมีพิกัด: แถวเหล่านี้ไม่ได้บันทึกจากเครื่องของเป้าหมาย พิกัดมักอยู่คนละพื้นที่กับเป้าหมาย (เช่น สายเดียวกันในชีต VOICE ที่มี IMEI อยู่คนละจังหวัด) และน่าจะเป็นตำแหน่งของฝั่งคู่สาย ระบบจึงไม่นับเป็นตำแหน่งของเป้าหมาย และแสดงบนแผนที่เป็นสี่เหลี่ยม`,
+    );
   }
   const review = imsiCheck.filter((c) => c.basis === 'review').length;
   if (review > 0) {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CoordResolver, homeWorkCandidates, locatedDays, pathPoints, siteStats, stays, type AreaLevel, type SiteStat, type Stay } from '../lib/analysis/locations';
+import { CoordResolver, homeWorkCandidates, locatedDays, pathPoints, peerSites, siteStats, stays, type AreaLevel, type SiteStat, type Stay } from '../lib/analysis/locations';
 import { fmtDate, fmtDateTime, fmtHours, fmtTime, isoText } from '../lib/time';
 import { fmtInt, pct } from '../lib/util';
 import { DataTable, type Column } from '../components/DataTable';
@@ -13,6 +13,7 @@ export function LocationsView() {
   const [scope, setScope] = useState<'one' | 'all'>('one');
   const [day, setDay] = useState('');
   const [level, setLevel] = useState<AreaLevel>('province');
+  const [showPeers, setShowPeers] = useState(true);
 
   const resolver = useMemo(() => new CoordResolver(coordImport?.coords), [coordImport]);
   const sitesById = useMemo(() => new Map(datasets.map((d) => [d.id, siteStats(d, settings, resolver)])), [datasets, settings, resolver]);
@@ -22,9 +23,37 @@ export function LocationsView() {
   const days = useMemo(() => (ds ? locatedDays(ds, settings) : []), [ds, settings]);
   const dayPath = useMemo(() => (ds && day ? pathPoints(ds, settings, resolver, day) : []), [ds, settings, resolver, day]);
 
+  const peerById = useMemo(() => new Map(datasets.map((d) => [d.id, peerSites(d, settings, resolver)])), [datasets, settings, resolver]);
+  const peerCount = (scope === 'all' ? datasets : ds ? [ds] : []).reduce((n, d) => n + (peerById.get(d.id)?.filter((s) => s.coord).length ?? 0), 0);
+
   const mapSites: MapSite[] = useMemo(() => {
     const list = scope === 'all' ? datasets : ds ? [ds] : [];
-    return list.flatMap((d) =>
+    // The other party's positions (squares) go first, under the target's own.
+    const others: MapSite[] = !showPeers
+      ? []
+      : list.flatMap((d) =>
+          (peerById.get(d.id) ?? [])
+            .filter((s) => s.coord)
+            .map((s) => ({
+              key: `${d.id}|peer|${s.key}`,
+              lat: s.coord!.lat,
+              lon: s.coord!.lon,
+              slot: d.slot,
+              label: s.label,
+              count: s.count,
+              approx: s.coord!.source === 'approx',
+              shape: 'square' as const,
+              lines: [
+                `ตำแหน่งของคู่สาย — ไม่ใช่ตำแหน่งของเป้าหมาย ${d.target}`,
+                `คู่สาย: ${s.peers.slice(0, 5).map((p) => `${p.peer} (${p.count.toLocaleString('th-TH')})`).join(', ')}${s.peers.length > 5 ? ` และอีก ${s.peers.length - 5} เลข` : ''}`,
+                [s.tumbol, s.amphur, s.province].filter(Boolean).join(' · '),
+                `${s.count.toLocaleString('th-TH')} รายการ` + (s.inferred ? ` (${s.inferred.toLocaleString('th-TH')} รายการมาจากแถว IMS ของเป้าหมายที่ไม่มี IMEI — น่าจะเป็นตำแหน่งฝั่งคู่สาย)` : ' (จากแถวที่ IMSI เป็นของคู่สาย)'),
+                `ครั้งแรก ${fmtDateTime(s.firstTs, settings.yearStyle)}`,
+                `ล่าสุด ${fmtDateTime(s.lastTs, settings.yearStyle)}`,
+              ],
+            })),
+        );
+    return others.concat(list.flatMap((d) =>
       (sitesById.get(d.id) ?? [])
         .filter((s) => s.coord)
         .map((s) => ({
@@ -43,8 +72,8 @@ export function LocationsView() {
             `ล่าสุด ${fmtDateTime(s.lastTs, settings.yearStyle)}`,
           ],
         })),
-    );
-  }, [scope, datasets, ds, sitesById, settings.yearStyle]);
+    ));
+  }, [scope, datasets, ds, sitesById, peerById, showPeers, settings.yearStyle]);
 
   const paths: MapPath[] = useMemo(
     () => (ds && dayPath.length ? [{ slot: ds.slot, points: dayPath.map((p) => ({ lat: p.lat, lon: p.lon, label: p.label, time: fmtTime(p.ts) })) }] : []),
@@ -85,7 +114,7 @@ export function LocationsView() {
       <DatasetPicker />
       <Section
         title="แผนที่เสาสัญญาณ"
-        sub="ขนาดวงกลมตามจำนวนครั้งที่ปรากฏ · คลิกวงกลมเพื่อดูรายละเอียด"
+        sub="● วงกลม = ตำแหน่งของเป้าหมาย · ■ สี่เหลี่ยม = ตำแหน่งของคู่สาย (ไม่ใช่ของเป้าหมาย) · ขนาดตามจำนวนครั้ง · คลิกเพื่อดูรายละเอียด"
         actions={
           <div className="filters">
             {datasets.length > 1 && (
@@ -112,20 +141,33 @@ export function LocationsView() {
           </div>
         }
       >
-        {scope === 'all' && datasets.length > 1 && (
-          <div className="legend">
-            {datasets.map((d) => (
-              <span key={d.id}>
-                <Swatch slot={d.slot} round /> {d.target}
-              </span>
-            ))}
-          </div>
-        )}
+        <div className="legend" aria-label="คำอธิบายสัญลักษณ์แผนที่">
+          {(scope === 'all' ? datasets : [ds]).map((d) => (
+            <span key={d.id}>
+              <Swatch slot={d.slot} round /> {d.target}
+            </span>
+          ))}
+          <span>
+            <i className="legend-shape round" aria-hidden="true" /> ตำแหน่งของเป้าหมาย
+          </span>
+          {peerCount > 0 && (
+            <label className="check" style={{ alignItems: 'center' }}>
+              <input type="checkbox" checked={showPeers} onChange={(e) => setShowPeers(e.target.checked)} />
+              <i className="legend-shape" aria-hidden="true" /> ตำแหน่งของคู่สาย ({fmtInt(peerCount)} เสา)
+            </label>
+          )}
+        </div>
         <MapView sites={mapSites} paths={paths} showBasemap={settings.showBasemap} mode={mode} fitKey={`${scope}|${ds.id}|${day}|${coordImport?.name ?? ''}`} />
         <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {approx && <Caveat>ไฟล์นี้ไม่มีพิกัดเสา วงกลมสีอ่อนจึงวางไว้รอบจุดกลางจังหวัดเพื่อบอกว่าอยู่จังหวัดใด ไม่ใช่ตำแหน่งจริงของเสา (นำเข้าไฟล์พิกัดเสาได้ที่การตั้งค่า)</Caveat>}
           {missing > 0 && <Caveat>{missing} เสาไม่มีข้อมูลจังหวัดหรือพิกัด จึงไม่แสดงบนแผนที่</Caveat>}
           {day && dayPath.length === 0 && <Caveat>วันที่เลือกไม่มีตำแหน่งที่แสดงบนแผนที่ได้</Caveat>}
+          {peerCount > 0 && (
+            <Caveat>
+              สี่เหลี่ยมคือพิกัดที่ไฟล์บันทึกไว้แต่ไม่ใช่ของเป้าหมาย: แถวที่ IMSI เป็นของคู่สาย และแถว IMS ที่ใช้ IMSI ของเป้าหมายแต่ไม่มี IMEI (พิกัดอยู่ฝั่งคู่สาย)
+              ไม่ถูกนับในเสาที่ใช้บ่อย พื้นที่ที่อาจเป็นที่พัก และเส้นทางของเป้าหมาย
+            </Caveat>
+          )}
           <Caveat>เสาสัญญาณแสดงพื้นที่ให้บริการ ไม่ใช่พิกัด GPS ของเครื่อง และเครื่องอาจเกาะเสาที่ไม่ใช่เสาที่ใกล้ที่สุด</Caveat>
         </div>
       </Section>
