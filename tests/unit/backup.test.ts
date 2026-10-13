@@ -118,6 +118,16 @@ describe('backup files', () => {
     expect(summarizeSnapshot(snapshot)).toMatchObject({ files: 4, targets: 4, aliases: 1, profiles: 2, photos: 1, coords: 2 });
   });
 
+  it('keeps the SIM owners set by the user, and drops malformed ones', async () => {
+    const snap = sampleSnapshot();
+    snap.files[2] = { ...snap.files[2], imsiOwners: { '520050000009999': 'target', '520050000000777': 'peer' } };
+    expect((await readBackup(await writeBackup(snap))).snapshot).toEqual(snap);
+    const file = { t: 'file', i: 0, fileName: 'a.csv', sheets: [{ name: 'a', rows: 0 }], targets: [], imsiOwners: { '520050000009999': 'target', abc: 'target', '520050000000777': 'boss' } };
+    const { snapshot, skipped } = await readBackup(await craft(minimal([file], { t: 'end', files: 1, rows: 0, profiles: 0, coords: 0 })));
+    expect(snapshot.files[0].imsiOwners).toEqual({ '520050000009999': 'target' });
+    expect(skipped).toBe(2);
+  });
+
   it('writes large sheets in chunks and reads them back in order', async () => {
     const rows = Array.from({ length: 2500 }, (_, i) => [`2026-08-01 ${String(i % 24).padStart(2, '0')}:00:00`, '0810000101', i % 7 ? `08${String(i).padStart(8, '0')}` : null]);
     const snap: SessionSnapshot = {

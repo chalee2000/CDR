@@ -14,7 +14,7 @@
  */
 
 import { cleanProfile, cleanText, MAX_PROFILES, type PersonProfile } from './profiles';
-import { cleanSettings, FLAT_FIELDS, type ColumnMapping, type FlatField, type RawSheet, type Settings } from './types';
+import { cleanSettings, FLAT_FIELDS, type ColumnMapping, type FlatField, type ImsiOwners, type RawSheet, type Settings } from './types';
 
 export const BACKUP_FORMAT = 'cdr-analyzer/backup';
 export const BACKUP_VERSION = 1;
@@ -58,6 +58,8 @@ export interface BackupFile {
   fileName: string;
   sheets: RawSheet[];
   mapping?: ColumnMapping;
+  /** True/DTAC: SIM owners set by the user. */
+  imsiOwners?: ImsiOwners;
   targets: BackupTarget[];
 }
 
@@ -125,7 +127,7 @@ export function canEncrypt(): boolean {
 
 type BackupRecord =
   | { t: 'settings'; settings: Settings }
-  | { t: 'file'; i: number; fileName: string; mapping?: ColumnMapping; sheets: { name: string; rows: number }[]; targets: BackupTarget[] }
+  | { t: 'file'; i: number; fileName: string; mapping?: ColumnMapping; imsiOwners?: ImsiOwners; sheets: { name: string; rows: number }[]; targets: BackupTarget[] }
   | { t: 'rows'; i: number; s: number; rows: Row[] }
   | { t: 'profile'; p: PersonProfile }
   | { t: 'coords'; name: string; entries: BackupCoords['entries'] }
@@ -135,7 +137,7 @@ function* records(s: SessionSnapshot): Generator<BackupRecord> {
   yield { t: 'settings', settings: s.settings };
   let total = 0;
   for (const [i, f] of s.files.entries()) {
-    yield { t: 'file', i, fileName: f.fileName, mapping: f.mapping, sheets: f.sheets.map((sh) => ({ name: sh.name, rows: sh.rows.length })), targets: f.targets };
+    yield { t: 'file', i, fileName: f.fileName, mapping: f.mapping, imsiOwners: f.imsiOwners, sheets: f.sheets.map((sh) => ({ name: sh.name, rows: sh.rows.length })), targets: f.targets };
     for (const [si, sh] of f.sheets.entries()) {
       let rows: Row[] = [];
       let chars = 0;
@@ -368,6 +370,21 @@ function cleanMapping(v: unknown, sheets: RawSheet[]): ColumnMapping | undefined
   return { sheet, headerRow: v.headerRow, columns, ...(target ? { target } : {}) };
 }
 
+const IMSI_RE = /^\d{5,20}$/;
+
+/** SIM owners set by the user; anything malformed is left out. */
+function cleanImsiOwners(v: unknown): { owners?: ImsiOwners; skipped: number } {
+  if (v === undefined) return { skipped: 0 };
+  if (!isObject(v)) return { skipped: 1 };
+  const owners: ImsiOwners = {};
+  let skipped = 0;
+  for (const [imsi, owner] of Object.entries(v).slice(0, 1000)) {
+    if (IMSI_RE.test(imsi) && (owner === 'target' || owner === 'peer')) owners[imsi] = owner;
+    else skipped++;
+  }
+  return { owners: Object.keys(owners).length ? owners : undefined, skipped };
+}
+
 function cleanTargets(v: unknown): BackupTarget[] {
   if (!Array.isArray(v)) return [];
   const seen = new Set<string>();
@@ -469,10 +486,13 @@ class SnapshotReader {
     }
     const mapping = r.mapping === undefined ? undefined : cleanMapping(r.mapping, sheets);
     if (r.mapping !== undefined && !mapping) this.skipped++;
+    const { owners, skipped } = cleanImsiOwners(r.imsiOwners);
+    this.skipped += skipped;
     this.files.push({
       fileName: cleanText(r.fileName, 255) ?? 'ไม่ทราบชื่อไฟล์',
       sheets,
       ...(mapping ? { mapping } : {}),
+      ...(owners ? { imsiOwners: owners } : {}),
       targets: cleanTargets(r.targets),
       expect,
       sheet: 0,
@@ -533,7 +553,13 @@ class SnapshotReader {
     ) {
       throw new BackupError('corrupt');
     }
-    const files: BackupFile[] = this.files.map((f) => ({ fileName: f.fileName, sheets: f.sheets, ...(f.mapping ? { mapping: f.mapping } : {}), targets: f.targets }));
+    const files: BackupFile[] = this.files.map((f) => ({
+      fileName: f.fileName,
+      sheets: f.sheets,
+      ...(f.mapping ? { mapping: f.mapping } : {}),
+      ...(f.imsiOwners ? { imsiOwners: f.imsiOwners } : {}),
+      targets: f.targets,
+    }));
     uniqueSlots(files.flatMap((f) => f.targets));
     return {
       snapshot: { settings: this.settings, files, profiles: [...this.profiles.values()], ...(this.coords ? { coords: this.coords } : {}) },

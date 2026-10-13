@@ -92,9 +92,13 @@ export interface ImsiCheck {
    * the target's other SIMs are, and in a handset (IMEI) the target's SIM
    * also used; review: like sim-change but in other handsets only, so kept
    * as a peer for the investigator to check; other: another handset; role:
-   * no IMSI.
+   * no IMSI; manual: set by the user (see auto).
    */
-  basis: 'data' | 'main' | 'sim-change' | 'review' | 'other' | 'role';
+  basis: 'data' | 'main' | 'sim-change' | 'review' | 'other' | 'role' | 'manual';
+  /** What the automatic rules decided (differs from owner only when set by hand). */
+  auto: 'target' | 'peer';
+  /** Seen in the DATA sheet, which by subpoena holds only the target's sessions. */
+  inData: boolean;
   /** Handsets (IMEI, first 14 digits) seen with this SIM, most used first. */
   imeis: string[];
   rows: number;
@@ -102,6 +106,9 @@ export interface ImsiCheck {
   firstTs: number;
   lastTs: number;
 }
+
+/** Owners of SIMs set by the user, by IMSI; they override the automatic rules. */
+export type ImsiOwners = Record<string, 'target' | 'peer'>;
 
 export interface DatasetMeta {
   format: FormatId;

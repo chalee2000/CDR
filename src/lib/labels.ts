@@ -73,7 +73,13 @@ export const IMSI_BASIS_TH: Record<ImsiCheck['basis'], string> = {
   review: 'ควรตรวจสอบ: อยู่ฝั่งเป้าหมายและใช้ไม่ทับช่วงเวลา แต่ใช้กับเครื่องอื่น (IMEI อาจเป็นของคู่สาย) จึงไม่นับเป็นของเป้าหมาย',
   other: 'ไม่ใช่ IMSI ของเป้าหมาย: เป็นขาที่บันทึกจากเครื่องคู่สายซึ่งอยู่เครือข่ายเดียวกัน',
   role: 'แถวไม่มี IMSI: ตัดสินจากบทบาท MO/MT ของแถว',
+  manual: 'ผู้ใช้กำหนดเอง',
 };
+
+/** The reason shown for a SIM, including what the rules said when the user overrode them. */
+export function imsiBasisTh(c: Pick<ImsiCheck, 'basis' | 'auto'>): string {
+  return c.basis === 'manual' ? `ผู้ใช้กำหนดเอง (ระบบตัดสินว่าเป็นของ${c.auto === 'target' ? 'เป้าหมาย' : 'คู่สาย'})` : IMSI_BASIS_TH[c.basis];
+}
 
 /** Where a SIM's cell positions end up in the analysis. */
 export function imsiUseTh(c: Pick<ImsiCheck, 'owner' | 'number'>): string {

@@ -55,6 +55,18 @@ test('sample data: every tab renders without errors', async ({ page }) => {
   await expect(sims).toContainText('520050000000303');
   await expect(sims.getByRole('row').filter({ hasText: '520050000000303' })).toContainText('ตำแหน่งของเป้าหมาย');
   await expect(sims).toContainText('(ไม่นับเป็นของเป้าหมาย)');
+  // The investigator can settle a SIM's owner; everything is recomputed.
+  const peerRow = sims.getByRole('row').filter({ hasText: 'อัตโนมัติ (คู่สาย)' }).first();
+  const imsi = (await peerRow.getByRole('combobox').getAttribute('aria-label'))!.replace('เจ้าของ IMSI ', '');
+  await sims.getByRole('combobox', { name: `เจ้าของ IMSI ${imsi}` }).selectOption('target');
+  const row = sims.getByRole('row').filter({ has: page.getByRole('combobox', { name: `เจ้าของ IMSI ${imsi}` }) });
+  await expect(row).toContainText('เป้าหมาย (กำหนดเอง)');
+  await expect(row).toContainText('ระบบตัดสินว่าเป็นของคู่สาย');
+  await expect(page.getByText('ผู้ใช้กำหนดเจ้าของ IMSI เอง 1 ค่า')).toBeVisible();
+  await shot(page, 'imsi-manual');
+  await sims.getByRole('combobox', { name: `เจ้าของ IMSI ${imsi}` }).selectOption('auto');
+  await expect(row).not.toContainText('(กำหนดเอง)');
+  await expect(page.getByText('ผู้ใช้กำหนดเจ้าของ IMSI เอง 1 ค่า')).toHaveCount(0);
 
   await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');
   await expect(page.getByRole('table', { name: 'ผู้ติดต่อร่วม' }).getByRole('button', { name: '0860000111' })).toBeVisible();

@@ -3,7 +3,7 @@ import { contactStats } from '../lib/analysis/contacts';
 import { CoordResolver, homeWorkCandidates, siteStats } from '../lib/analysis/locations';
 import { summarize } from '../lib/analysis/summary';
 import { datasetName } from '../lib/dataset';
-import { IMSI_BASIS_TH, imsiUseTh } from '../lib/labels';
+import { imsiBasisTh, imsiUseTh } from '../lib/labels';
 import { fmtDate, fmtDuration } from '../lib/time';
 import type { Dataset, ImsiCheck } from '../lib/types';
 import { formatBytes, fmtInt, pct } from '../lib/util';
@@ -87,7 +87,7 @@ type SimRow = ImsiCheck & { ds: Dataset; key: string };
 
 /** True/DTAC: every SIM in the file, whose handset it is, and where its positions are counted. */
 function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
-  const { settings } = useStore();
+  const { settings, setImsiOwner } = useStore();
   const y = settings.yearStyle;
   const rows: SimRow[] = datasets.flatMap((ds) => (ds.meta.imsiCheck ?? []).map((c, i) => ({ ...c, ds, key: `${ds.id}-${i}` })));
   if (!rows.length) return null;
@@ -98,10 +98,37 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
       key: 'owner',
       header: 'เป็นของ',
       render: (r) => (
-        <span className={`badge ${r.owner === 'target' ? 'accent' : 'warn'}`}>{r.owner === 'target' ? 'เป้าหมาย' : r.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย'}</span>
+        <span className={`badge ${r.owner === 'target' ? 'accent' : 'warn'}`}>
+          {r.owner === 'target' ? 'เป้าหมาย' : r.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย'}
+          {r.basis === 'manual' && ' (กำหนดเอง)'}
+        </span>
       ),
       sortValue: (r) => (r.owner === 'target' ? 0 : 1),
-      csv: (r) => (r.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย'),
+      csv: (r) => (r.owner === 'target' ? 'เป้าหมาย' : 'คู่สาย') + (r.basis === 'manual' ? ' (กำหนดเอง)' : ''),
+    },
+    {
+      key: 'edit',
+      header: 'แก้ไขเจ้าของ',
+      render: (r) =>
+        !r.imsi ? (
+          <span className="muted small">-</span>
+        ) : r.inData ? (
+          <span className="muted small" title="ชีต DATA มีเฉพาะการใช้งานของเป้าหมายตามหมายเรียก">
+            ยืนยันจากชีต DATA
+          </span>
+        ) : (
+          <select
+            className="input"
+            aria-label={`เจ้าของ IMSI ${r.imsi}`}
+            value={r.basis === 'manual' ? r.owner : 'auto'}
+            onChange={(e) => setImsiOwner(r.ds.id, r.imsi, e.target.value === 'auto' ? undefined : (e.target.value as 'target' | 'peer'))}
+          >
+            <option value="auto">อัตโนมัติ ({r.auto === 'target' ? 'เป้าหมาย' : 'คู่สาย'})</option>
+            <option value="target">เป็นของเป้าหมาย</option>
+            <option value="peer">เป็นของคู่สาย</option>
+          </select>
+        ),
+      csv: (r) => (r.basis === 'manual' ? 'กำหนดเอง' : 'อัตโนมัติ'),
     },
     {
       key: 'number',
@@ -118,7 +145,7 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
     },
     { key: 'rows', header: 'แถว', num: true, render: (r) => fmtInt(r.rows), sortValue: (r) => r.rows, csv: (r) => r.rows },
     { key: 'cell', header: 'มีพิกัด', num: true, render: (r) => fmtInt(r.withCell), sortValue: (r) => r.withCell, csv: (r) => r.withCell },
-    { key: 'use', header: 'ใช้พิกัดเป็น', render: (r) => imsiUseTh(r), csv: (r) => imsiUseTh(r) },
+    { key: 'use', header: 'ใช้พิกัดเป็น', render: (r) => <span style={{ display: 'block', minWidth: 170 }}>{imsiUseTh(r)}</span>, csv: (r) => imsiUseTh(r) },
     {
       key: 'period',
       header: 'ช่วงที่พบ',
@@ -126,7 +153,16 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
       sortValue: (r) => r.firstTs,
       csv: (r) => `${fmtDate(r.firstTs, y)} – ${fmtDate(r.lastTs, y)}`,
     },
-    { key: 'basis', header: 'เหตุผล', render: (r) => <span className="small">{IMSI_BASIS_TH[r.basis]}</span>, csv: (r) => IMSI_BASIS_TH[r.basis] },
+    {
+      key: 'basis',
+      header: 'เหตุผล',
+      render: (r) => (
+        <span className="small" style={{ display: 'block', minWidth: 260 }}>
+          {imsiBasisTh(r)}
+        </span>
+      ),
+      csv: (r) => imsiBasisTh(r),
+    },
   ];
   return (
     <Section
@@ -138,7 +174,8 @@ function ImsiCheckSection({ datasets }: { datasets: Dataset[] }) {
         <Caveat>
           แผนที่ เสาที่ใช้บ่อย พื้นที่ที่อาจเป็นที่พัก และเส้นทาง ใช้เฉพาะพิกัดของแถวที่เป็นของเป้าหมาย พิกัดของคู่สายแสดงแยกในคอลัมน์ "เสาของคู่สาย" (แท็บรายการข้อมูล)
           และในหน้ารายละเอียดของเลขนั้น · IMEI ในแถวของคู่สายเป็นเครื่องของคู่สาย ไม่ถูกนับเป็นเครื่องของเป้าหมาย · ถือว่าเป้าหมายมีซิมเดียว
-          ซิมอื่นนับเป็นของเป้าหมายเฉพาะเมื่อใช้ไม่ทับช่วงเวลาและใช้ในเครื่องเดียวกับซิมของเป้าหมาย (เปลี่ยนซิม)
+          ซิมอื่นนับเป็นของเป้าหมายเฉพาะเมื่อใช้ไม่ทับช่วงเวลาและใช้ในเครื่องเดียวกับซิมของเป้าหมาย (เปลี่ยนซิม) · แก้เจ้าของได้ที่คอลัมน์ "แก้ไขเจ้าของ"
+          แผนที่ เสา เส้นทาง และอุปกรณ์จะคำนวณใหม่ทันที และค่าที่แก้ติดไปกับไฟล์สำรอง ควรแก้เมื่อยืนยันได้จากข้อมูลอื่นแล้วเท่านั้น
         </Caveat>
       </div>
     </Section>

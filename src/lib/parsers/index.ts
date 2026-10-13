@@ -1,4 +1,4 @@
-import type { ColumnMapping, DatasetMeta, FlatField, Interaction, RawSheet, RawWorkbook, ZMode } from '../types';
+import type { ColumnMapping, DatasetMeta, FlatField, Interaction, RawSheet, RawWorkbook, ZMode, ImsiOwners } from '../types';
 import { normalizeNumber } from '../phone';
 import { countBy } from '../util';
 import { looksLikeDtac, parseDtacWorkbook } from './dtac';
@@ -80,7 +80,12 @@ function mergeByTarget(drafts: DatasetDraft[]): DatasetDraft[] {
   return [...byTarget.values()];
 }
 
-export function parseWorkbook(wb: RawWorkbook, zMode: ZMode, mapping?: ColumnMapping): ParseOutcome {
+export interface ParseOptions {
+  /** True/DTAC: SIM owners set by the user. */
+  imsiOwners?: ImsiOwners;
+}
+
+export function parseWorkbook(wb: RawWorkbook, zMode: ZMode, mapping?: ColumnMapping, opts: ParseOptions = {}): ParseOutcome {
   if (mapping) {
     const sheet = wb.sheets.find((s) => s.name === mapping.sheet);
     if (!sheet) return { kind: 'needs-mapping', suggestions: suggest(wb), reason: 'ไม่พบชีตที่เลือก' };
@@ -88,7 +93,7 @@ export function parseWorkbook(wb: RawWorkbook, zMode: ZMode, mapping?: ColumnMap
   }
 
   if (looksLikeDtac(wb)) {
-    return { kind: 'ok', drafts: [parseDtacWorkbook(wb, zMode)] };
+    return { kind: 'ok', drafts: [parseDtacWorkbook(wb, zMode, undefined, opts.imsiOwners)] };
   }
 
   const drafts: DatasetDraft[] = [];

@@ -116,7 +116,7 @@ describe('DTAC multi-sheet layout', () => {
   const OLD = '520050000000303';
   const NEW = '520050000009999';
   /** Sample C without its DATA sheet; from mid-August the target's rows carry another SIM (and optionally another IMEI). */
-  function simChange(newImei?: string) {
+  function simChange(newImei?: string, imsiOwners?: Record<string, 'target' | 'peer'>) {
     const sheets = wbC.sheets
       .filter((sh) => !/^DATA/.test(sh.name))
       .map((sh) => {
@@ -128,7 +128,7 @@ describe('DTAC multi-sheet layout', () => {
         const swap = (r: (string | null)[]) => r.map((v, j) => (j === ii ? NEW : j === ei && newImei ? newImei : v));
         return { ...sh, rows: sh.rows.map((r, k) => (k > 0 && r[ii] === OLD && String(r[ti]) >= '2026-08-15' ? swap(r) : r)) };
       });
-    return drafts(parseWorkbook({ ...wbC, sheets }, 'local'))[0];
+    return drafts(parseWorkbook({ ...wbC, sheets }, 'local', undefined, { imsiOwners }))[0];
   }
 
   it('keeps a SIM change in the same handset as the target, and peers as peers, without a DATA sheet', () => {
@@ -151,6 +151,30 @@ describe('DTAC multi-sheet layout', () => {
     // Neither its positions nor its handset are counted as the target's.
     expect(d.interactions.some((i) => i.targetObs?.imsi === NEW || i.targetObs?.imei === '35000000999999')).toBe(false);
     expect(d.meta.notes.some((n) => n.includes('ควรตรวจสอบ'))).toBe(true);
+  });
+
+  it('lets the investigator settle the owner of a SIM', () => {
+    // Confirmed: the target changed SIM and phone together.
+    const d = simChange('35000000999999', { [NEW]: 'target' });
+    expect(new Set(d.meta.targetImsis)).toEqual(new Set([OLD, NEW]));
+    expect(d.meta.imsiCheck!.find((x) => x.imsi === NEW)).toMatchObject({ owner: 'target', basis: 'manual', auto: 'peer' });
+    expect(d.interactions.some((i) => i.targetObs?.imsi === NEW && i.targetObs.cell)).toBe(true);
+    expect(d.meta.notes.some((n) => n.includes('ผู้ใช้กำหนดเจ้าของ IMSI เอง 1 ค่า'))).toBe(true);
+
+    // Confirming what the rules already say changes nothing.
+    const peer = c.meta.imsiCheck!.find((x) => x.owner === 'peer' && x.imsi)!;
+    const same = simChange(undefined, { [peer.imsi]: 'peer' });
+    expect(same.meta.imsiCheck!.find((x) => x.imsi === peer.imsi)).toMatchObject({ owner: 'peer', basis: 'other' });
+
+    // A SIM taken away from the target: its rows and positions become the peer's.
+    const away = simChange(undefined, { [NEW]: 'peer' });
+    expect(away.meta.targetImsis).toEqual([OLD]);
+    expect(away.interactions.some((i) => i.targetObs?.imsi === NEW)).toBe(false);
+    expect(away.interactions.some((i) => i.peerObs?.imsi === NEW)).toBe(true);
+
+    // The DATA sheet is the target's by subpoena: its SIM cannot be reassigned.
+    const [locked] = drafts(parseWorkbook(wbC, 'local', undefined, { imsiOwners: { [OLD]: 'peer' } }));
+    expect(locked.meta.imsiCheck!.find((x) => x.imsi === OLD)).toMatchObject({ owner: 'target', basis: 'data', inData: true });
   });
 
   it('never puts a peer handset (IMEI) among the target devices', () => {

@@ -1,4 +1,4 @@
-import type { Cell, ImsiCheck, Interaction, Observation, RawSheet, RawWorkbook, SheetStat, SourceKind, ZMode } from '../types';
+import type { Cell, ImsiCheck, ImsiOwners, Interaction, Observation, RawSheet, RawWorkbook, SheetStat, SourceKind, ZMode } from '../types';
 import { normalizeNumber, operatorFromPlmn, type PhoneInfo } from '../phone';
 import { parseWallClock } from '../time';
 import { imeiCore, likelySameHandset } from '../imei';
@@ -187,7 +187,7 @@ function pickObs(rows: CommRec[]): Observation | undefined {
   return (rows.find((r) => r.obs.cell) ?? rows[0]).obs;
 }
 
-export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: string): DatasetDraft {
+export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: string, imsiOwners: ImsiOwners = {}): DatasetDraft {
   const bySheet = new Map<string, RawSheet>();
   for (const s of wb.sheets) {
     const k = sheetKind(s.name);
@@ -329,6 +329,19 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     } else basis.set(imsi, 'review');
   }
 
+  // The investigator's word over the rules, for SIMs outside the DATA sheet
+  // (that sheet holds only the target's sessions by subpoena).
+  const autoTarget = new Set(targetImsis);
+  let manual = 0;
+  for (const [imsi, owner] of Object.entries(imsiOwners)) {
+    const t = sims.get(imsi);
+    if (!t || t.data > 0 || (owner === 'target') === autoTarget.has(imsi)) continue;
+    if (owner === 'target') targetImsis.add(imsi);
+    else targetImsis.delete(imsi);
+    basis.set(imsi, 'manual');
+    manual++;
+  }
+
   const byRole = { target: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity }, peer: { rows: 0, withCell: 0, firstTs: Infinity, lastTs: -Infinity } };
   for (const r of comm) {
     const sideKey = r.roleSide === 'A' ? r.a.key : r.b.key;
@@ -352,7 +365,9 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
         imsi,
         owner: mine ? 'target' : 'peer',
         ...(number ? { number } : {}),
-        basis: mine ? (basis.get(imsi) ?? 'other') : basis.get(imsi) === 'review' ? 'review' : 'other',
+        basis: basis.get(imsi) === 'manual' ? 'manual' : mine ? (basis.get(imsi) ?? 'other') : basis.get(imsi) === 'review' ? 'review' : 'other',
+        auto: autoTarget.has(imsi) ? 'target' : 'peer',
+        inData: t.data > 0,
         imeis: [...t.imeis].sort((x, y) => y[1] - x[1]).map(([e]) => e),
         rows: t.rows,
         withCell: t.withCell,
@@ -363,7 +378,7 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
     .sort((x, y) => (x.owner === y.owner ? y.rows - x.rows : x.owner === 'target' ? -1 : 1));
   for (const owner of ['target', 'peer'] as const) {
     const b = byRole[owner];
-    if (b.rows) imsiCheck.push({ imsi: '', owner, ...(owner === 'target' && target ? { number: target } : {}), basis: 'role', imeis: [], rows: b.rows, withCell: b.withCell, firstTs: finite(b.firstTs), lastTs: finite(b.lastTs) });
+    if (b.rows) imsiCheck.push({ imsi: '', owner, ...(owner === 'target' && target ? { number: target } : {}), basis: 'role', auto: owner, inData: false, imeis: [], rows: b.rows, withCell: b.withCell, firstTs: finite(b.firstTs), lastTs: finite(b.lastTs) });
   }
 
   // ---- Merge every row of the same communication, across VOICE and IMS.
@@ -595,6 +610,9 @@ export function parseDtacWorkbook(wb: RawWorkbook, zMode: ZMode, forcedTarget?: 
         (others ? ` จาก IMSI ที่ไม่ใช่ของเป้าหมาย ${others.toLocaleString('th-TH')} ค่า` : '') +
         ` ระบบแยกตำแหน่งของคู่สายออกจากตำแหน่งของเป้าหมายโดยดูจาก IMSI ตำแหน่งเหล่านี้จึงไม่ถูกนับเป็นตำแหน่งของเป้าหมาย (ดูตาราง "ตรวจเจ้าของพิกัดจาก IMSI")`,
     );
+  }
+  if (manual > 0) {
+    notes.push(`ผู้ใช้กำหนดเจ้าของ IMSI เอง ${manual} ค่า (แทนผลที่ระบบตัดสิน) พิกัดและเครื่องของซิมเหล่านี้นับตามที่กำหนด`);
   }
   const review = imsiCheck.filter((c) => c.basis === 'review').length;
   if (review > 0) {

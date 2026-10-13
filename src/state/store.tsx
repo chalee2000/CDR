@@ -6,7 +6,7 @@ import { parseWorkbook, type SheetSuggestion } from '../lib/parsers';
 import { generateSamples } from '../lib/samples/generate';
 import type { ImportedCoords } from '../lib/analysis/locations';
 import { hasContent, mergeProfiles, type PersonProfile, type ProfileMap } from '../lib/profiles';
-import { cleanSettings, DEFAULT_SETTINGS, type ColumnMapping, type Dataset, type RawWorkbook, type Settings } from '../lib/types';
+import { cleanSettings, DEFAULT_SETTINGS, type ColumnMapping, type Dataset, type ImsiOwners, type RawWorkbook, type Settings } from '../lib/types';
 
 export type ThemeChoice = 'system' | 'light' | 'dark';
 
@@ -14,6 +14,8 @@ interface FileEntry {
   id: string;
   raw: RawWorkbook;
   mapping?: ColumnMapping;
+  /** True/DTAC: SIM owners set by the user. */
+  imsiOwners?: ImsiOwners;
 }
 
 export interface MappingRequest {
@@ -70,6 +72,8 @@ interface Store {
   /** A backup file waiting for the restore dialog. */
   restoreRequest?: File;
   requestRestore: (file: File | undefined) => void;
+  /** Set (or with undefined, clear) the owner of a SIM in the file a dataset came from. */
+  setImsiOwner: (datasetId: string, imsi: string, owner: 'target' | 'peer' | undefined) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -181,7 +185,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Parsing depends only on the files and the time interpretation; colours and
   // aliases are applied afterwards so renaming a target does not re-parse.
   const parsed = useMemo(
-    () => files.map((f) => ({ id: f.id, res: parseWorkbook(f.raw, settings.zMode, f.mapping) })),
+    () => files.map((f) => ({ id: f.id, res: parseWorkbook(f.raw, settings.zMode, f.mapping, { imsiOwners: f.imsiOwners }) })),
     [files, settings.zMode],
   );
   const datasets = useMemo(() => {
@@ -301,6 +305,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fileName: f.raw.fileName,
         sheets: f.raw.sheets,
         ...(f.mapping ? { mapping: f.mapping } : {}),
+        ...(f.imsiOwners && Object.keys(f.imsiOwners).length ? { imsiOwners: f.imsiOwners } : {}),
         targets: datasets
           .filter((d) => d.id.startsWith(`${f.id}:`))
           .map((d) => ({ target: d.target, slot: d.slot, ...(d.label !== d.target ? { label: d.label } : {}) })),
@@ -318,13 +323,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const nextLabels: Record<string, string> = {};
       const unread: MappingRequest[] = [];
       for (const f of s.files) {
-        const entry: FileEntry = { id: `f${++fileSeq}`, raw: { fileName: f.fileName, sheets: f.sheets }, mapping: f.mapping };
+        const entry: FileEntry = { id: `f${++fileSeq}`, raw: { fileName: f.fileName, sheets: f.sheets }, mapping: f.mapping, imsiOwners: f.imsiOwners };
         for (const t of f.targets) {
           nextSlots[`${entry.id}:${t.target}`] = t.slot;
           if (t.label) nextLabels[`${entry.id}:${t.target}`] = t.label;
         }
         // A file the parser no longer recognises goes to the column dialog, as on import.
-        const res = parseWorkbook(entry.raw, s.settings.zMode, entry.mapping);
+        const res = parseWorkbook(entry.raw, s.settings.zMode, entry.mapping, { imsiOwners: entry.imsiOwners });
         if (res.kind === 'ok') entries.push(entry);
         else if (res.suggestions.length) unread.push({ file: entry, suggestions: res.suggestions, reason: res.reason });
         else notify('error', `${f.fileName}: อ่านไฟล์นี้จากไฟล์สำรองไม่ได้`);
@@ -346,6 +351,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [notify, settings.showBasemap],
   );
+
+  const setImsiOwner = useCallback((datasetId: string, imsi: string, owner: 'target' | 'peer' | undefined) => {
+    const fileId = datasetId.split(':')[0];
+    setFiles((fs) =>
+      fs.map((f) => {
+        if (f.id !== fileId) return f;
+        const next = { ...f.imsiOwners };
+        if (owner) next[imsi] = owner;
+        else delete next[imsi];
+        return { ...f, imsiOwners: next };
+      }),
+    );
+  }, []);
 
   const resolveMapping = useCallback(
     (mapping: ColumnMapping | null) => {
@@ -397,6 +415,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     restoreSession,
     restoreRequest,
     requestRestore: setRestoreRequest,
+    setImsiOwner,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

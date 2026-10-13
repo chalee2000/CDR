@@ -1,7 +1,7 @@
 import writeXlsxFile from 'write-excel-file/universal';
 import type { Sheet } from 'write-excel-file/universal';
 import { activeInteractions, datasetName } from '../dataset';
-import { IMSI_BASIS_TH, PEER_KIND_TH, SOURCE_TH, imsiUseTh, interactionLabel } from '../labels';
+import { PEER_KIND_TH, SOURCE_TH, imsiBasisTh, imsiUseTh, interactionLabel } from '../labels';
 import { isoText } from '../time';
 import type { Dataset, Settings } from '../types';
 import { allBursts, simultaneousBursts, type CallBurst } from '../analysis/bursts';
@@ -153,7 +153,7 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
       rows: sims.map(({ ds, c }) => [
         ds.target,
         c.imsi || '(ไม่มี IMSI)',
-        c.owner === 'target' ? 'เป้าหมาย' : c.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย',
+        (c.owner === 'target' ? 'เป้าหมาย' : c.basis === 'review' ? 'คู่สาย (ควรตรวจสอบ)' : 'คู่สาย') + (c.basis === 'manual' ? ' (กำหนดเอง)' : ''),
         text(c.number),
         c.imeis.join(' '),
         c.rows,
@@ -161,7 +161,7 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
         imsiUseTh(c),
         isoText(c.firstTs),
         isoText(c.lastTs),
-        IMSI_BASIS_TH[c.basis],
+        imsiBasisTh(c),
       ]),
     });
   }
