@@ -289,7 +289,7 @@ export function NetworkView() {
             </button>
           </div>
           <span className="spacer" />
-          <button className="btn small" type="button" onClick={toggleFull}>
+          <button className="btn small" type="button" onClick={toggleFull} title="หรือดับเบิลคลิกที่ผัง">
             {isFull ? 'ออกจากเต็มจอ' : 'เต็มจอ'}
           </button>
           <button className="btn small" type="button" onClick={savePng}>
@@ -329,6 +329,7 @@ export function NetworkView() {
               onSelect={setSelection}
               resetKey={resetKey}
               onReady={(c) => (chart.current = c)}
+              onDoubleClick={toggleFull}
             />
           </div>
           {valid ? (

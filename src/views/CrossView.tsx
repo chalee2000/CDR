@@ -112,7 +112,7 @@ export function CrossView() {
 
   return (
     <>
-      <Section title="ผังผู้ติดต่อร่วมและการติดต่อตรงระหว่างเป้าหมาย" sub="เฉพาะเลขหมายที่ติดต่อกับเป้าหมายตั้งแต่ 2 รายขึ้นไป · ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · คลิกเลขหมายเพื่อดูรายละเอียด">
+      <Section title="ผังผู้ติดต่อร่วมและการติดต่อตรงระหว่างเป้าหมาย" sub="เฉพาะเลขหมายที่ติดต่อกับเป้าหมายตั้งแต่ 2 รายขึ้นไป · ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · คลิกเลขหมายเพื่อดูรายละเอียด · ดับเบิลคลิกผังเพื่อดูเต็มจอ">
         {bridges.edges.length > 0 ? (
           <>
             <LinkLegend net={bridges} datasets={datasets} mode={mode} profiles={profiles} unit="ครั้ง" />
@@ -127,6 +127,7 @@ export function CrossView() {
                 height={440}
                 allLabels
                 allEdgeLabels
+                expandable
                 onSelect={(sel) => {
                   if (sel?.type === 'node') openPeer(sel.id);
                 }}

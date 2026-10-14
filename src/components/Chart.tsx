@@ -16,6 +16,8 @@ interface Props {
   onClick?: (params: { name?: string; data?: unknown; dataType?: string }) => void;
   /** Click on empty canvas (no chart element under the pointer). */
   onBlankClick?: () => void;
+  /** Double click anywhere on the chart. */
+  onDblClick?: () => void;
   onReady?: (chart: ECharts) => void;
   /**
    * Merge option updates into the chart instead of replacing it, so the
@@ -26,13 +28,15 @@ interface Props {
   resetKey?: unknown;
 }
 
-export function EChart({ option, height, label, onClick, onBlankClick, onReady, merge, resetKey }: Props) {
+export function EChart({ option, height, label, onClick, onBlankClick, onDblClick, onReady, merge, resetKey }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<ECharts>(null);
   const click = useRef(onClick);
   click.current = onClick;
   const blank = useRef(onBlankClick);
   blank.current = onBlankClick;
+  const dbl = useRef(onDblClick);
+  dbl.current = onDblClick;
   const lastReset = useRef<unknown>(undefined);
 
   useEffect(() => {
@@ -43,6 +47,7 @@ export function EChart({ option, height, label, onClick, onBlankClick, onReady, 
     c.getZr().on('click', (e) => {
       if (!e.target) blank.current?.();
     });
+    c.getZr().on('dblclick', () => dbl.current?.());
     const ro = new ResizeObserver(() => c.resize());
     ro.observe(el.current);
     onReady?.(c);

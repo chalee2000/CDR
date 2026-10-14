@@ -108,7 +108,7 @@ export function ContactDrawer() {
           <PersonCard number={peer} profile={profiles[peer]} onEdit={() => openProfileEditor(peer)} />
         </Section>
         {ego && (
-          <Section title="ผังความเชื่อมโยงของเลขนี้" sub="ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · ลูกศรชี้จากฝั่งที่โทรหรือส่ง">
+          <Section title="ผังความเชื่อมโยงของเลขนี้" sub="ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · ลูกศรชี้จากฝั่งที่โทรหรือส่ง · ดับเบิลคลิกผังเพื่อดูเต็มจอ">
             <div className="net-box mini">
               <LinkChart
                 network={ego}
@@ -121,6 +121,7 @@ export function ContactDrawer() {
                 compact
                 allLabels
                 allEdgeLabels
+                expandable
                 onSelect={(sel) => {
                   if (sel?.type === 'node' && sel.id !== peer) openPeer(sel.id);
                 }}

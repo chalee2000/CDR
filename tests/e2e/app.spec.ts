@@ -168,6 +168,13 @@ test('link chart: search, details and a person profile saved to and opened from 
   await expect(page.getByRole('table', { name: 'ตัวชี้วัดเครือข่าย' })).toContainText('นายทดสอบ ตัวอย่าง');
   await shot(page, '10-link-profile');
 
+  // Double click on the chart works like the full-screen button, and back.
+  const mainChart = page.getByRole('img', { name: /^ผังความเชื่อมโยง \d/ });
+  await mainChart.dblclick({ position: { x: 20, y: 20 } });
+  await expect(toolbar.getByRole('button', { name: 'ออกจากเต็มจอ' })).toBeVisible();
+  await mainChart.dblclick({ position: { x: 20, y: 20 } });
+  await expect(toolbar.getByRole('button', { name: 'เต็มจอ', exact: true })).toBeVisible();
+
   // The chart (with the photo drawn in it) still exports as an image.
   const image = page.waitForEvent('download');
   await toolbar.getByRole('button', { name: 'บันทึกภาพ PNG' }).click();
@@ -199,9 +206,24 @@ test('link chart: search, details and a person profile saved to and opened from 
   await expect(contacts).toContainText('นายทดสอบ ตัวอย่าง');
   await contacts.getByRole('button', { name: '0860000111' }).first().click();
   const drawer = page.getByRole('dialog', { name: /0860000111/ });
-  await expect(drawer.getByRole('img', { name: 'ผังความเชื่อมโยงของ 0860000111' })).toBeVisible();
+  const egoChart = drawer.getByRole('img', { name: 'ผังความเชื่อมโยงของ 0860000111' });
+  await expect(egoChart).toBeVisible();
   await expect(drawer).toContainText('คดีสมมติ');
   await expect(drawer).toContainText('1-1111-11111-11-9');
+  // Double click shows the chart full screen; double click again goes back.
+  const exitFull = page.getByRole('button', { name: 'ออกจากเต็มจอ' });
+  await egoChart.dblclick({ position: { x: 20, y: 20 } });
+  await expect(exitFull).toBeVisible();
+  await expect.poll(async () => (await egoChart.boundingBox())!.height).toBeGreaterThan(600);
+  await egoChart.dblclick({ position: { x: 20, y: 20 } });
+  await expect(exitFull).toHaveCount(0);
+  await expect.poll(async () => (await egoChart.boundingBox())!.height).toBe(280);
+  // Esc leaves full screen only: the number's details stay open.
+  await egoChart.dblclick({ position: { x: 20, y: 20 } });
+  await expect(exitFull).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(exitFull).toHaveCount(0);
+  await expect(drawer).toBeVisible();
   await page.keyboard.press('Escape');
 
   await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');

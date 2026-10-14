@@ -268,6 +268,7 @@ export function BurstView() {
                     {fmtInt(selected.count)} ครั้งใน {selected.minutes.toFixed(1)} นาที · โทรออก {selected.callsOut} · โทรเข้า {selected.callsIn} · SMS {selected.sms}
                     {selected.talkSec > 0 && ` · สนทนารวม ${fmtDuration(selected.talkSec)}`}
                     {selected.topSite && ` · เสาที่ปรากฏมาก: ${selected.topSite}`}
+                    {' · ดับเบิลคลิกผังเพื่อดูเต็มจอ'}
                   </div>
                 </div>
                 <button className="btn small" type="button" onClick={() => setSelectedId(undefined)}>
@@ -288,6 +289,7 @@ export function BurstView() {
                     compact
                     allLabels
                     allEdgeLabels
+                    expandable
                     onSelect={(sel) => {
                       if (sel?.type === 'node' && sel.id !== selected.target) openPeer(sel.id);
                     }}
