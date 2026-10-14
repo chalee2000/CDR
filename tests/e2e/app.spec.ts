@@ -56,6 +56,16 @@ test('sample data: every tab renders without errors', async ({ page }) => {
   // AIS files have no cell coordinates: sites sit at their subdistrict's point.
   await expect(page.getByText(/วางไว้ที่จุดกลางของตำบลตามชื่อพื้นที่ในไฟล์/)).toBeVisible();
   await expect(page.getByRole('cell', { name: '≈ ตำบล' }).first()).toBeVisible();
+  // The map opens on the whole country; its buttons zoom in to the sites and back.
+  const mapBox = page.getByRole('region', { name: 'แผนที่เสาสัญญาณ' });
+  const zoom = async () => Number(await mapBox.getAttribute('data-zoom'));
+  await expect.poll(zoom).toBeGreaterThan(0);
+  const country = await zoom();
+  expect(country).toBeLessThanOrEqual(7);
+  await mapBox.getByRole('button', { name: 'ซูมไปที่เสาของเป้าหมาย' }).click();
+  await expect.poll(zoom).toBeGreaterThan(country);
+  await mapBox.getByRole('button', { name: 'ดูทั้งประเทศไทย' }).click();
+  await expect.poll(zoom).toBe(country);
   await page.getByRole('group', { name: 'ขอบเขตแผนที่' }).getByRole('button', { name: 'ทุกเป้าหมาย' }).click();
   await expect(page.locator('.peer-square').first()).toBeVisible();
   // A name typed in for the other party shows next to its number.
