@@ -245,6 +245,32 @@ test('file panel: put away from the top bar or its own button, shown again, reme
   await expect(page.getByRole('button', { name: /ซ่อนแถบไฟล์/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
 
+  // On the top bar the button sits right after the privacy note, before the backup menu,
+  // and at a middling width nothing overflows into its neighbour.
+  await page.setViewportSize({ width: 1050, height: 800 });
+  const note = page.locator('.topbar .privacy');
+  const toggleButton = page.getByRole('button', { name: /ซ่อนแถบไฟล์/ });
+  const backupButton = page.getByRole('button', { name: /สำรอง\/กู้ไฟล์/ });
+  const [noteBox, toggleBox, backupBox] = await Promise.all([note.boundingBox(), toggleButton.boundingBox(), backupButton.boundingBox()]);
+  expect(noteBox!.x + noteBox!.width).toBeLessThanOrEqual(toggleBox!.x + 1);
+  expect(toggleBox!.x + toggleBox!.width).toBeLessThanOrEqual(backupBox!.x + 1);
+  // Nothing in the bar runs past the screen or spills over a neighbour, at any middling width.
+  for (const width of [1050, 900, 700, 600]) {
+    await page.setViewportSize({ width, height: 800 });
+    const fit = await page.evaluate((w) => {
+      const bar = document.querySelector('.topbar')!;
+      const items = [...bar.children].filter((e) => (e as HTMLElement).offsetWidth > 0 && !e.classList.contains('spacer'));
+      return {
+        doc: document.documentElement.scrollWidth <= w,
+        inside: items.every((e) => e.getBoundingClientRect().right <= w),
+        // A control whose content is wider than itself spills over the next one.
+        clean: [...bar.querySelectorAll('.privacy, .btn, .seg, .seg button')].every((e) => e.scrollWidth <= e.clientWidth + 1),
+      };
+    }, width);
+    expect(fit, `top bar at ${width}px`).toEqual({ doc: true, inside: true, clean: true });
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+
   const main = page.getByRole('main');
   const narrow = (await main.boundingBox())!.width;
   await page.getByRole('button', { name: /ซ่อนแถบไฟล์/ }).click();

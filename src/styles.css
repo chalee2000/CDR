@@ -166,6 +166,12 @@ h4 {
   flex: 1;
 }
 
+/* Only the app name gives way when the bar is tight: squeezed buttons spill
+   their text over the next one. */
+.topbar > :not(.brand):not(.spacer) {
+  flex-shrink: 0;
+}
+
 .privacy {
   display: inline-flex;
   align-items: center;
@@ -235,8 +241,19 @@ h4 {
   .main {
     padding: 16px;
   }
+}
+
+/* The top bar is full at about this width: drop the long half of the privacy
+   note, and below 1000px let the bar take a second line. */
+@media (max-width: 1240px) {
   .privacy span.long {
     display: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  .topbar {
+    flex-wrap: wrap;
   }
 }
 

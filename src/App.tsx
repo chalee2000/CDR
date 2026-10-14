@@ -141,18 +141,6 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        {hasData && (
-          <button
-            ref={sideToggle}
-            className="btn small no-print"
-            type="button"
-            aria-expanded={sideShown}
-            aria-controls="side-panel"
-            onClick={() => setSide(!sideShown)}
-          >
-            {sideShown ? '◀ ซ่อนแถบไฟล์' : '▶ แสดงแถบไฟล์'}
-          </button>
-        )}
         <div className="brand">
           <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
             <rect width="28" height="28" rx="7" fill="var(--accent)" />
@@ -178,6 +166,18 @@ export function App() {
             ประมวลผลในเครื่อง<span className="long"> · ไม่อัปโหลดข้อมูล</span>
           </span>
         </span>
+        {hasData && (
+          <button
+            ref={sideToggle}
+            className="btn small no-print"
+            type="button"
+            aria-expanded={sideShown}
+            aria-controls="side-panel"
+            onClick={() => setSide(!sideShown)}
+          >
+            {sideShown ? '◀ ซ่อนแถบไฟล์' : '▶ แสดงแถบไฟล์'}
+          </button>
+        )}
         <BackupMenu />
         {datasets.length > 0 && (
           <>
