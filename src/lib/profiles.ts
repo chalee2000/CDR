@@ -1,6 +1,6 @@
 /**
  * Person details an investigator attaches to a number (name, national ID,
- * address, criminal record, photo). They are typed in by the user — never read from
+ * address, criminal record, parcel pickup location, photo). They are typed in by the user — never read from
  * CDR files — live only in page memory, and leave the browser only as a file
  * the user saves on purpose.
  */
@@ -16,6 +16,8 @@ export interface PersonProfile {
   address?: string;
   /** One case per line. */
   criminalRecord?: string;
+  /** Where the person picks up parcels: coordinates or places, one per line, as typed. */
+  parcelLocation?: string;
   notes?: string;
   /** data:image/jpeg;base64,… — square, re-encoded in the browser (no EXIF). */
   photo?: string;
@@ -36,6 +38,7 @@ const TEXT_LIMITS = {
   nationalId: 40,
   address: 2000,
   criminalRecord: 10000,
+  parcelLocation: 2000,
   notes: 10000,
 } as const;
 export type ProfileTextField = keyof typeof TEXT_LIMITS;

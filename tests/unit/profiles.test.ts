@@ -116,6 +116,16 @@ describe('person profiles', () => {
     expect(parseProfilesFile(text).profiles[0].nationalId).toBe('1111111111119');
   });
 
+  it('keeps parcel pickup locations as typed, one per line', () => {
+    const p = cleanProfile({ number: '0860000111', parcelLocation: ' 13.7563, 100.5018 (จุดสมมติ)\r\n13.7000, 100.5000 ' })!;
+    // An entry with only a pickup location is worth keeping.
+    expect(p).toBeDefined();
+    expect(p.parcelLocation).toBe('13.7563, 100.5018 (จุดสมมติ)\n13.7000, 100.5000');
+    const text = serializeProfiles({ [p.number]: p });
+    expect(parseProfilesFile(text).profiles[0].parcelLocation).toBe(p.parcelLocation);
+    expect(cleanProfile({ number: '0860000111', parcelLocation: 'x'.repeat(5000) })!.parcelLocation).toHaveLength(2000);
+  });
+
   it('names saved files by date and time', () => {
     expect(profilesFileName(new Date(2026, 9, 12, 14, 5))).toBe('CDR-profiles_20261012-1405.json');
   });

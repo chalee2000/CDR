@@ -140,8 +140,22 @@ export function analysisTables(datasets: Dataset[], settings: Settings, imported
   if (people.length) {
     tables.push({
       sheet: 'ข้อมูลบุคคล',
-      header: ['เลขหมาย', 'ชื่อ', 'นามสกุล', 'ชื่อเล่น/ฉายา', 'เลขบัตรประชาชน', 'ที่อยู่', 'ประวัติคดีอาญา', 'จำนวนคดี', 'หมายเหตุ', 'มีรูป', 'แก้ไขล่าสุด', 'ที่มา'],
-      rows: people.map((p) => [p.number, text(p.firstName), text(p.lastName), text(p.nickname), text(formatNationalId(p.nationalId)), text(p.address), recordLines(p).join(' | '), recordLines(p).length, text(p.notes), p.photo ? 'มี' : '', p.updatedAt ? isoText(p.updatedAt) : '', 'ผู้ใช้กรอกเอง (ไม่ได้มาจากไฟล์ CDR)']),
+      header: ['เลขหมาย', 'ชื่อ', 'นามสกุล', 'ชื่อเล่น/ฉายา', 'เลขบัตรประชาชน', 'ที่อยู่', 'ประวัติคดีอาญา', 'จำนวนคดี', 'พิกัดรับพัสดุ', 'หมายเหตุ', 'มีรูป', 'แก้ไขล่าสุด', 'ที่มา'],
+      rows: people.map((p) => [
+        p.number,
+        text(p.firstName),
+        text(p.lastName),
+        text(p.nickname),
+        text(formatNationalId(p.nationalId)),
+        text(p.address),
+        recordLines(p).join(' | '),
+        recordLines(p).length,
+        text((p.parcelLocation ?? '').split('\n').map((l) => l.trim()).filter(Boolean).join(' | ')),
+        text(p.notes),
+        p.photo ? 'มี' : '',
+        p.updatedAt ? isoText(p.updatedAt) : '',
+        'ผู้ใช้กรอกเอง (ไม่ได้มาจากไฟล์ CDR)',
+      ]),
     });
   }
 

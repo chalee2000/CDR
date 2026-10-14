@@ -54,6 +54,12 @@ export function PersonCard({ number, profile, onEdit, compact }: { number: strin
             </ul>
           </div>
         )}
+        {profile.parcelLocation && (
+          <div>
+            <div className="person-label">พิกัดรับพัสดุ</div>
+            <div className="pre-line">{profile.parcelLocation}</div>
+          </div>
+        )}
         {profile.notes && (
           <div>
             <div className="person-label">หมายเหตุ</div>

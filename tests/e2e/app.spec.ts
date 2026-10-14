@@ -151,12 +151,14 @@ test('link chart: search, details and a person profile saved to and opened from 
   await expect(dialog).not.toContainText('หลักสุดท้ายไม่ตรงกับเลขตรวจสอบ');
   await dialog.getByLabel('ที่อยู่').fill('ที่อยู่สมมติ');
   await dialog.getByLabel('ประวัติคดีอาญา (บรรทัดละ 1 คดี)').fill('คดีสมมติ');
+  await dialog.getByLabel('พิกัดรับพัสดุ (บรรทัดละ 1 จุด)').fill('13.7563, 100.5018 (จุดสมมติ)');
   await page.getByTestId('photo-input').setInputFiles({ name: 'picture.png', mimeType: 'image/png', buffer: picture });
   await expect(dialog.locator('img.person-photo')).toBeVisible();
   await dialog.getByRole('button', { name: 'บันทึก', exact: true }).click();
   await expect(panel).toContainText('นายทดสอบ ตัวอย่าง');
   await expect(panel).toContainText('ประวัติคดีอาญา 1 รายการ');
   await expect(panel).toContainText('เลขบัตรประชาชน: 1-1111-11111-11-9');
+  await expect(panel).toContainText('พิกัดรับพัสดุ13.7563, 100.5018 (จุดสมมติ)');
   // The chart can be searched by the ID too.
   const search = page.getByLabel('ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง');
   await search.fill('0810000101');
@@ -192,6 +194,7 @@ test('link chart: search, details and a person profile saved to and opened from 
   expect(json.profiles.map((p: { number: string }) => p.number)).toEqual(['0860000111']);
   expect(json.profiles[0].photo).toMatch(/^data:image\/jpeg;base64,/);
   expect(json.profiles[0].nationalId).toBe('1111111111119');
+  expect(json.profiles[0].parcelLocation).toBe('13.7563, 100.5018 (จุดสมมติ)');
   await expect(sidebar).not.toContainText('ยังไม่ได้บันทึก');
 
   // Nothing is kept by the browser: a new page starts empty until the file is opened.

@@ -10,6 +10,7 @@ const FIELDS: { key: ProfileTextField; label: string; rows?: number; placeholder
   { key: 'nationalId', label: 'เลขบัตรประชาชน', placeholder: 'เลข 13 หลัก', check: nationalIdProblem },
   { key: 'address', label: 'ที่อยู่', rows: 2, wide: true },
   { key: 'criminalRecord', label: 'ประวัติคดีอาญา (บรรทัดละ 1 คดี)', rows: 4, wide: true, placeholder: 'เช่น ยาเสพติด (ครอบครองเพื่อจำหน่าย) คดีอาญาที่ …/2565 สภ.…' },
+  { key: 'parcelLocation', label: 'พิกัดรับพัสดุ (บรรทัดละ 1 จุด)', rows: 2, wide: true, placeholder: 'เช่น 13.7563, 100.5018 — ที่รับพัสดุ/บริษัทขนส่ง' },
   { key: 'notes', label: 'หมายเหตุ', rows: 2, wide: true },
 ];
 
