@@ -16,6 +16,7 @@ import { NetworkView } from './views/NetworkView';
 import { OverviewView } from './views/OverviewView';
 import { RecordsView } from './views/RecordsView';
 import { TimelineView } from './views/TimelineView';
+import { fmtDateTime } from './lib/time';
 import { useStore, type ThemeChoice } from './state/store';
 
 const TABS = [
@@ -162,7 +163,12 @@ export function App() {
           </svg>
           <div style={{ minWidth: 0 }}>
             <h1>CDR Analyzer</h1>
-            <small>วิเคราะห์ข้อมูลการใช้โทรศัพท์และความเชื่อมโยง</small>
+            <small>
+              วิเคราะห์ข้อมูลการใช้โทรศัพท์และความเชื่อมโยง ·{' '}
+              <span title="เวลาที่สร้างแอปรุ่นนี้" data-testid="build-time">
+                รุ่น {fmtDateTime(__BUILD_TIME__, settings.yearStyle)}
+              </span>
+            </small>
           </div>
         </div>
         <div className="spacer" />

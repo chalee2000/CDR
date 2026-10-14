@@ -31,6 +31,9 @@ function singlePassSheetXml(): Plugin {
 export default defineConfig({
   base: './',
   plugins: [singlePassSheetXml(), react(), viteSingleFile()],
+  // Shown in the header so a stale page is easy to tell from a new build.
+  // Thai wall-clock time as the app keeps every time (UTC fields = local clock).
+  define: { __BUILD_TIME__: JSON.stringify(Date.now() + 7 * 3600_000) },
   // The dev server pre-bundles dependencies without plugins: keep this one
   // out so the fix applies there too.
   optimizeDeps: { exclude: ['read-excel-file'] },

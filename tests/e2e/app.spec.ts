@@ -35,6 +35,8 @@ test('sample data: every tab renders without errors', async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto(APP);
   await expect(page.getByRole('heading', { name: 'วิเคราะห์ CDR ในเบราว์เซอร์' })).toBeVisible();
+  // The header says which build this is, so a stale page is easy to spot.
+  await expect(page.getByTestId('build-time')).toHaveText(/^รุ่น \d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}$/);
   await shot(page, '00-welcome');
   await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
 
