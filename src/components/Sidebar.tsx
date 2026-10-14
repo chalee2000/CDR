@@ -11,6 +11,7 @@ import { useStore } from '../state/store';
 import { Swatch } from './bits';
 import { downloadBlob } from './download';
 import { reencodePhoto } from './photo';
+import { Icon } from './icons';
 
 export function ImportPanel() {
   const { addFiles, loadSamples, busy } = useStore();
@@ -18,7 +19,12 @@ export function ImportPanel() {
   const input = useRef<HTMLInputElement>(null);
   return (
     <section className="side-section">
-      <h2>นำเข้าไฟล์ CDR</h2>
+      <h2>
+        <span className="h-title">
+          <Icon name="upload" />
+          นำเข้าไฟล์ CDR
+        </span>
+      </h2>
       <div
         className={`dropzone${over ? ' over' : ''}`}
         role="button"
@@ -36,6 +42,7 @@ export function ImportPanel() {
           void addFiles([...e.dataTransfer.files]);
         }}
       >
+        <Icon name="folder" size={22} />
         <strong>{busy ? 'กำลังอ่านไฟล์…' : 'ลากไฟล์มาวาง หรือคลิกเพื่อเลือก'}</strong>
         <p>.xlsx หรือ .csv เลือกได้หลายไฟล์ (AIS, True/DTAC และตารางทั่วไป) · วางไฟล์สำรอง .cdrbak เพื่อกู้งาน</p>
       </div>
@@ -66,7 +73,10 @@ export function DatasetList() {
   return (
     <section className="side-section">
       <h2 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>เป้าหมาย ({datasets.length})</span>
+        <span className="h-title">
+          <Icon name="device" />
+          <span>เป้าหมาย ({datasets.length})</span>
+        </span>
         <button className="btn ghost small danger" type="button" onClick={clearAll}>
           ล้างทั้งหมด
         </button>
@@ -186,7 +196,10 @@ export function ProfilePanel() {
   return (
     <section className="side-section">
       <h2 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
-        <span>ข้อมูลบุคคล{count > 0 ? ` (${count})` : ''}</span>
+        <span className="h-title">
+          <Icon name="idcard" />
+          <span>ข้อมูลบุคคล{count > 0 ? ` (${count})` : ''}</span>
+        </span>
         {profilesDirty && <span className="badge warn">ยังไม่ได้บันทึก</span>}
       </h2>
       <p className="meta" style={{ margin: '0 0 6px' }}>
@@ -281,7 +294,10 @@ export function SettingsPanel() {
   return (
     <section className="side-section">
       <details className="settings">
-        <summary>การตั้งค่าการวิเคราะห์</summary>
+        <summary>
+          <Icon name="sliders" />
+          การตั้งค่าการวิเคราะห์
+        </summary>
         <div className="settings-grid">
           <div className="field">
             <span>เวลาในไฟล์ที่ลงท้ายด้วย "Z"</span>

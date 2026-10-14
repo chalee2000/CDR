@@ -223,12 +223,12 @@ export function BurstView() {
 
       <Section title="ภาพรวมการติดต่อถี่ (Call burst)" sub={`เกณฑ์ ${crit} · นับเฉพาะเลขหมายบุคคล · ช่วงที่ซ้อนกันนับเป็นช่วงเดียว · SMS หลายท่อนจากเลขเดียวกันภายใน 1 นาทีนับเป็น 1 ข้อความ`}>
         <div className="kpis">
-          <Kpi label="ช่วงติดต่อถี่" value={fmtInt(bursts.length)} hint={`กลางคืน ${fmtInt(bursts.filter((b) => b.night).length)} ช่วง`} />
-          <Kpi label="รายการในช่วงถี่" value={fmtInt(total)} hint={`${pct(total, base)} ของการติดต่อกับเลขบุคคล`} />
-          <Kpi label="ช่วงที่ใหญ่ที่สุด" value={biggest ? `${fmtInt(biggest.count)} ครั้ง` : '-'} hint={biggest ? `${fmtDateTime(biggest.from, y)} · ${biggest.minutes.toFixed(0)} นาที` : undefined} />
-          <Kpi label="ถี่ที่สุด" value={densest ? `${(densest.count / Math.max(1, densest.minutes)).toFixed(1)} ครั้ง/นาที` : '-'} hint={densest ? fmtDateTime(densest.from, y) : undefined} />
-          <Kpi label="คู่ติดต่อที่เกี่ยวข้อง" value={fmtInt(peers.length)} hint={`ปรากฏตั้งแต่ 2 ช่วง ${fmtInt(peers.filter((p) => p.bursts > 1).length)} ราย`} />
-          {datasets.length > 1 && <Kpi label="ติดต่อถี่พร้อมกัน (Candidate)" value={fmtInt(pairs.length)} hint="ต่างเป้าหมาย ช่วงเวลาซ้อนหรือใกล้กัน" />}
+          <Kpi tone="call" icon="bolt" label="ช่วงติดต่อถี่" value={fmtInt(bursts.length)} hint={`กลางคืน ${fmtInt(bursts.filter((b) => b.night).length)} ช่วง`} />
+          <Kpi tone="sms" icon="list" label="รายการในช่วงถี่" value={fmtInt(total)} hint={`${pct(total, base)} ของการติดต่อกับเลขบุคคล`} />
+          <Kpi tone="call" icon="grid" label="ช่วงที่ใหญ่ที่สุด" value={biggest ? `${fmtInt(biggest.count)} ครั้ง` : '-'} hint={biggest ? `${fmtDateTime(biggest.from, y)} · ${biggest.minutes.toFixed(0)} นาที` : undefined} />
+          <Kpi tone="time" icon="timer" label="ถี่ที่สุด" value={densest ? `${(densest.count / Math.max(1, densest.minutes)).toFixed(1)} ครั้ง/นาที` : '-'} hint={densest ? fmtDateTime(densest.from, y) : undefined} />
+          <Kpi tone="people" icon="users" label="คู่ติดต่อที่เกี่ยวข้อง" value={fmtInt(peers.length)} hint={`ปรากฏตั้งแต่ 2 ช่วง ${fmtInt(peers.filter((p) => p.bursts > 1).length)} ราย`} />
+          {datasets.length > 1 && <Kpi tone="night" icon="link" label="ติดต่อถี่พร้อมกัน (Candidate)" value={fmtInt(pairs.length)} hint="ต่างเป้าหมาย ช่วงเวลาซ้อนหรือใกล้กัน" />}
         </div>
       </Section>
 

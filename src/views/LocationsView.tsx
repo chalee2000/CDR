@@ -187,9 +187,9 @@ export function LocationsView() {
       </Section>
       <Section title="พื้นที่ที่ปรากฏบ่อย (Candidate)" sub="นับจำนวนคืน/วันทำการที่พบที่เสานั้น — เป็นข้อสังเกต ต้องยืนยันด้วยข้อมูลภาคสนาม">
         <div className="kpis">
-          <Kpi label={`กลางคืน (${String(settings.nightStart).padStart(2, '0')}:00–${String(settings.nightEnd).padStart(2, '0')}:00)`} value={places.home?.site.label ?? 'ข้อมูลไม่พอ'} hint={places.home ? `${places.home.support} จาก ${places.home.outOf} คืนที่มีข้อมูลตำแหน่ง` : undefined} />
-          <Kpi label="วันทำการ 09:00–17:00" value={places.work?.site.label ?? 'ข้อมูลไม่พอ'} hint={places.work ? `${places.work.support} จาก ${places.work.outOf} วัน` : undefined} />
-          <Kpi label="จำนวนเสา" value={fmtInt(sites.length)} hint={`${fmtInt(sites.reduce((n, s) => n + s.cells.length, 0))} เซลล์`} />
+          <Kpi tone="night" icon="moon" label={`กลางคืน (${String(settings.nightStart).padStart(2, '0')}:00–${String(settings.nightEnd).padStart(2, '0')}:00)`} value={places.home?.site.label ?? 'ข้อมูลไม่พอ'} hint={places.home ? `${places.home.support} จาก ${places.home.outOf} คืนที่มีข้อมูลตำแหน่ง` : undefined} />
+          <Kpi tone="time" icon="clock" label="วันทำการ 09:00–17:00" value={places.work?.site.label ?? 'ข้อมูลไม่พอ'} hint={places.work ? `${places.work.support} จาก ${places.work.outOf} วัน` : undefined} />
+          <Kpi tone="place" icon="tower" label="จำนวนเสา" value={fmtInt(sites.length)} hint={`${fmtInt(sites.reduce((n, s) => n + s.cells.length, 0))} เซลล์`} />
         </div>
       </Section>
       <Section title="เสาที่ใช้" sub="เรียงตามจำนวนครั้ง (รวมรายการ data ถ้ามี)">

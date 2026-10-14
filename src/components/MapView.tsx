@@ -74,7 +74,7 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
     outlineLayer.current?.setStyle((f) => ({
       color: c.axis,
       weight: 1,
-      fillColor: f?.properties?.thailand ? (mode === 'light' ? '#ecebe6' : '#262624') : mode === 'light' ? '#f6f5f2' : '#1d1d1c',
+      fillColor: f?.properties?.thailand ? (mode === 'light' ? '#e6eaf2' : '#1a2740') : mode === 'light' ? '#f3f5f9' : '#121c30',
       fillOpacity: 1,
     }));
   }, [mode]);

@@ -31,15 +31,15 @@ function DatasetOverview({ ds }: { ds: Dataset }) {
       }
     >
       <div className="kpis">
-        <Kpi label="ช่วงข้อมูล" value={`${s.spanDays} วัน`} hint={`${fmtDate(s.firstTs, y)} – ${fmtDate(s.lastTs, y)} · มีกิจกรรม ${s.activeDays} วัน`} />
-        <Kpi label="โทรออก / โทรเข้า" value={`${fmtInt(s.callsOut)} / ${fmtInt(s.callsIn)}`} hint={s.callsUnanswered ? `ไม่สำเร็จ ${fmtInt(s.callsUnanswered)} ครั้ง` : 'ทุกสายมีระยะเวลาสนทนา'} />
-        <Kpi label="เวลาสนทนารวม" value={fmtDuration(s.talkSec)} hint={`เฉลี่ย ${fmtDuration(s.avgTalkSec)} · นานสุด ${fmtDuration(s.maxTalkSec)}`} />
-        <Kpi label="SMS ส่ง / รับ" value={`${fmtInt(s.smsOut)} / ${fmtInt(s.smsIn)}`} />
-        {s.dataSessions > 0 && <Kpi label="ใช้อินเทอร์เน็ต" value={`${fmtInt(s.dataSessions)} ครั้ง`} hint={formatBytes(s.dataBytes)} />}
-        <Kpi label="ผู้ติดต่อ (บุคคล)" value={fmtInt(s.contactsPerson)} hint={`เลขบริการ/ชื่อผู้ส่ง ${fmtInt(s.contactsService)}${s.intlContacts ? ` · ต่างประเทศ ${s.intlContacts}` : ''}`} />
-        <Kpi label="ติดต่อช่วงกลางคืน" value={pct(s.nightComm, s.commTotal)} hint={`${fmtInt(s.nightComm)} จาก ${fmtInt(s.commTotal)} ครั้ง`} />
-        <Kpi label="เสาสัญญาณ" value={fmtInt(s.sites)} hint={`${fmtInt(s.cells)} เซลล์ · ${s.provinces.length} จังหวัด`} />
-        <Kpi label="เครื่อง (IMEI) / ซิม (IMSI)" value={`${s.imeiCores.length} / ${s.imsis.length}`} hint={s.imeiCores.length > 1 ? 'มีการใช้มากกว่า 1 เครื่อง' : undefined} />
+        <Kpi tone="time" icon="calendar" label="ช่วงข้อมูล" value={`${s.spanDays} วัน`} hint={`${fmtDate(s.firstTs, y)} – ${fmtDate(s.lastTs, y)} · มีกิจกรรม ${s.activeDays} วัน`} />
+        <Kpi tone="call" icon="phone" label="โทรออก / โทรเข้า" value={`${fmtInt(s.callsOut)} / ${fmtInt(s.callsIn)}`} hint={s.callsUnanswered ? `ไม่สำเร็จ ${fmtInt(s.callsUnanswered)} ครั้ง` : 'ทุกสายมีระยะเวลาสนทนา'} />
+        <Kpi tone="call" icon="timer" label="เวลาสนทนารวม" value={fmtDuration(s.talkSec)} hint={`เฉลี่ย ${fmtDuration(s.avgTalkSec)} · นานสุด ${fmtDuration(s.maxTalkSec)}`} />
+        <Kpi tone="sms" icon="message" label="SMS ส่ง / รับ" value={`${fmtInt(s.smsOut)} / ${fmtInt(s.smsIn)}`} />
+        {s.dataSessions > 0 && <Kpi tone="data" icon="globe" label="ใช้อินเทอร์เน็ต" value={`${fmtInt(s.dataSessions)} ครั้ง`} hint={formatBytes(s.dataBytes)} />}
+        <Kpi tone="people" icon="users" label="ผู้ติดต่อ (บุคคล)" value={fmtInt(s.contactsPerson)} hint={`เลขบริการ/ชื่อผู้ส่ง ${fmtInt(s.contactsService)}${s.intlContacts ? ` · ต่างประเทศ ${s.intlContacts}` : ''}`} />
+        <Kpi tone="night" icon="moon" label="ติดต่อช่วงกลางคืน" value={pct(s.nightComm, s.commTotal)} hint={`${fmtInt(s.nightComm)} จาก ${fmtInt(s.commTotal)} ครั้ง`} />
+        <Kpi tone="place" icon="tower" label="เสาสัญญาณ" value={fmtInt(s.sites)} hint={`${fmtInt(s.cells)} เซลล์ · ${s.provinces.length} จังหวัด`} />
+        <Kpi tone="device" icon="device" label="เครื่อง (IMEI) / ซิม (IMSI)" value={`${s.imeiCores.length} / ${s.imsis.length}`} hint={s.imeiCores.length > 1 ? 'มีการใช้มากกว่า 1 เครื่อง' : undefined} />
       </div>
       <div className="grid two" style={{ marginTop: 14 }}>
         <div>

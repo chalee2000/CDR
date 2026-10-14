@@ -75,7 +75,7 @@ export function TimelineView() {
       <Section title="สัดส่วนตามช่วงของวัน" sub="เกณฑ์เดียวกับรายงาน cdr-narcotics">
         <div className="kpis">
           {DAY_PERIODS.map((p) => (
-            <Kpi key={p.key} label={p.label} value={pct(prof.periods[p.key], commTotal)} hint={`${fmtInt(prof.periods[p.key])} ครั้ง`} />
+            <Kpi key={p.key} tone={p.key === 'night' ? 'night' : 'time'} icon={p.key === 'night' ? 'moon' : 'clock'} label={p.label} value={pct(prof.periods[p.key], commTotal)} hint={`${fmtInt(prof.periods[p.key])} ครั้ง`} />
           ))}
         </div>
       </Section>

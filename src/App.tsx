@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ComponentType } from 'react';
 import { exportAnalysisXlsx, exportFileName } from './lib/export/excel';
 import { BackupMenu, RestoreDialog } from './components/Backup';
 import { ContactDrawer } from './components/ContactDrawer';
@@ -18,20 +18,21 @@ import { RecordsView } from './views/RecordsView';
 import { TimelineView } from './views/TimelineView';
 import { fmtDateTime } from './lib/time';
 import { useStore, type ThemeChoice } from './state/store';
+import { Emblem, Icon, type IconName } from './components/icons';
 
-const TABS = [
-  { id: 'overview', label: 'ภาพรวม', View: OverviewView },
-  { id: 'contacts', label: 'คู่ติดต่อ', View: ContactsView },
-  { id: 'timeline', label: 'ช่วงเวลา', View: TimelineView },
-  { id: 'bursts', label: 'Call burst', View: BurstView },
-  { id: 'locations', label: 'พื้นที่และการเดินทาง', View: LocationsView },
-  { id: 'devices', label: 'อุปกรณ์', View: DevicesView },
-  { id: 'network', label: 'ผังเครือข่าย', View: NetworkView },
-  { id: 'cross', label: 'เชื่อมโยงข้ามเป้าหมาย', View: CrossView },
-  { id: 'records', label: 'รายการข้อมูล', View: RecordsView },
-] as const;
+const TABS: readonly { id: string; label: string; icon: IconName; View: ComponentType }[] = [
+  { id: 'overview', label: 'ภาพรวม', icon: 'grid', View: OverviewView },
+  { id: 'contacts', label: 'คู่ติดต่อ', icon: 'phone', View: ContactsView },
+  { id: 'timeline', label: 'ช่วงเวลา', icon: 'clock', View: TimelineView },
+  { id: 'bursts', label: 'Call burst', icon: 'bolt', View: BurstView },
+  { id: 'locations', label: 'พื้นที่และการเดินทาง', icon: 'pin', View: LocationsView },
+  { id: 'devices', label: 'อุปกรณ์', icon: 'device', View: DevicesView },
+  { id: 'network', label: 'ผังเครือข่าย', icon: 'nodes', View: NetworkView },
+  { id: 'cross', label: 'เชื่อมโยงข้ามเป้าหมาย', icon: 'link', View: CrossView },
+  { id: 'records', label: 'รายการข้อมูล', icon: 'list', View: RecordsView },
+];
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = string;
 
 // A layout preference, like the theme: the file panel can be put away.
 const SIDEBAR_KEY = 'cdr-analyzer:sidebar';
@@ -40,37 +41,58 @@ function Welcome() {
   const { loadSamples } = useStore();
   return (
     <div className="welcome">
-      <div>
-        <h2>วิเคราะห์ CDR ในเบราว์เซอร์</h2>
-        <p className="lead">
-          นำเข้าไฟล์ CDR จากผู้ให้บริการ (ลากไฟล์มาวางที่แถบด้านซ้าย หรือกดปุ่ม "ใช้ข้อมูลตัวอย่าง") แล้วดูภาพรวม คู่ติดต่อ ช่วงเวลา เสาสัญญาณ การเดินทาง
-          อุปกรณ์ และความเชื่อมโยงระหว่างเป้าหมายได้ทันที
-        </p>
+      <div className="hero">
+        <Emblem size={56} />
+        <div>
+          <h2>วิเคราะห์ CDR ในเบราว์เซอร์</h2>
+          <p className="lead">
+            นำเข้าไฟล์ CDR จากผู้ให้บริการ (ลากไฟล์มาวางที่แถบด้านซ้าย หรือกดปุ่ม "ใช้ข้อมูลตัวอย่าง") แล้วดูภาพรวม คู่ติดต่อ ช่วงเวลา เสาสัญญาณ การเดินทาง
+            อุปกรณ์ และความเชื่อมโยงระหว่างเป้าหมายได้ทันที
+          </p>
+        </div>
       </div>
       <div className="note">
         <strong>ข้อมูลไม่ออกจากเครื่องนี้</strong> — ไฟล์ถูกอ่านและวิเคราะห์ในเบราว์เซอร์ทั้งหมด ไม่มีการอัปโหลดไปที่ใด และไม่ถูกบันทึกไว้ในเบราว์เซอร์ (ปิดหน้าแล้วข้อมูลหายไป
         — ใช้เมนู "สำรอง/กู้ไฟล์" ด้านบนเพื่อเก็บงานเป็นไฟล์แล้วเปิดทำต่อภายหลัง) การเชื่อมต่ออินเทอร์เน็ตมีเพียงภาพแผนที่ฐาน ซึ่งปิดได้ในการตั้งค่า
       </div>
       <ul className="feature-list">
-        <li>
+        <li data-tone="time">
+          <span className="feature-icon">
+            <Icon name="folder" size={20} />
+          </span>
           <strong>รูปแบบไฟล์ที่รองรับ</strong>AIS แบบตารางเดียว (START_DATETIME, A_NUMBER, B_NUMBER, RECORD_TYPE…), True/DTAC แบบหลายชีต (VOICE/IMS/SMS/DATA/WIFI — รวมสายที่ถูกบันทึกซ้ำใน VOICE และ IMS ให้อัตโนมัติ) และตาราง .xlsx/.csv
           ทั่วไปที่จับคู่หัวคอลัมน์ให้อัตโนมัติหรือเลือกเองได้
         </li>
-        <li>
+        <li data-tone="call">
+          <span className="feature-icon">
+            <Icon name="phone" size={20} />
+          </span>
           <strong>คู่ติดต่อและช่วงเวลา</strong>อันดับคู่ติดต่อ เวลาสนทนา การโทรกลางคืน แผนภาพวัน×ชั่วโมง ช่วงที่เงียบ และช่วงที่ติดต่อถี่
         </li>
-        <li>
+        <li data-tone="place">
+          <span className="feature-icon">
+            <Icon name="pin" size={20} />
+          </span>
           <strong>พื้นที่และอุปกรณ์</strong>เสาที่ใช้บ่อย พื้นที่ที่อาจเป็นที่พัก/ที่ทำงาน เส้นทางรายวันบนแผนที่ การเปลี่ยนเครื่อง และเครื่อง 2 ซิม
         </li>
-        <li>
+        <li data-tone="night">
+          <span className="feature-icon">
+            <Icon name="nodes" size={20} />
+          </span>
           <strong>เชื่อมโยงหลายเป้าหมาย</strong>ผังเชื่อมโยงแบบผังสืบสวน (ใครโทรหาใคร กี่ครั้ง) ใส่ชื่อ ที่อยู่ ประวัติคดี และรูปบุคคลได้ ผู้ติดต่อร่วม ลำดับการติดต่อทอด อุปกรณ์ร่วม
           การอยู่พื้นที่เดียวกัน และ Centrality/Community
         </li>
-        <li>
+        <li data-tone="data">
+          <span className="feature-icon">
+            <Icon name="upload" size={20} />
+          </span>
           <strong>ส่งออกและสำรองงาน</strong>Excel หลายชีตสำหรับทำรายงาน, CSV ของทุกตาราง, ภาพผังเครือข่าย, พิมพ์/บันทึกเป็น PDF และไฟล์สำรองงานทั้งหมด
           (ตั้งรหัสผ่านได้) ไว้เปิดทำต่อภายหลัง
         </li>
-        <li>
+        <li data-tone="sms">
+          <span className="feature-icon">
+            <Icon name="alert" size={20} />
+          </span>
           <strong>ข้อควรระวังในการตีความ</strong>เสาสัญญาณไม่ใช่พิกัด GPS และตัวชี้วัดต่าง ๆ ใช้จัดลำดับสิ่งที่ควรตรวจสอบต่อ ไม่ใช่ข้อสรุปว่าผู้ใดกระทำผิด
         </li>
       </ul>
@@ -142,13 +164,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
-            <rect width="28" height="28" rx="7" fill="var(--accent)" />
-            <circle cx="9" cy="18" r="3" fill="var(--on-accent)" />
-            <circle cx="19" cy="9" r="3" fill="var(--on-accent)" />
-            <circle cx="20" cy="20" r="2.2" fill="var(--on-accent)" />
-            <path d="M9 18 L19 9 L20 20 Z" fill="none" stroke="var(--on-accent)" strokeWidth="1.4" />
-          </svg>
+          <Emblem />
           <div style={{ minWidth: 0 }}>
             <h1>CDR Analyzer</h1>
             <small>
@@ -161,7 +177,7 @@ export function App() {
         </div>
         <div className="spacer" />
         <span className="privacy" title="ไฟล์ถูกประมวลผลในเบราว์เซอร์นี้เท่านั้น">
-          <span aria-hidden="true">🔒</span>
+          <Icon name="lock" size={14} />
           <span>
             ประมวลผลในเครื่อง<span className="long"> · ไม่อัปโหลดข้อมูล</span>
           </span>
@@ -211,6 +227,7 @@ export function App() {
               <nav className="tabs" role="tablist" aria-label="มุมมองการวิเคราะห์">
                 {TABS.map((t) => (
                   <button key={t.id} role="tab" type="button" aria-selected={t.id === tab} aria-controls={`panel-${t.id}`} id={`tab-${t.id}`} onClick={() => setTab(t.id)}>
+                    <Icon name={t.icon} />
                     {t.label}
                   </button>
                 ))}

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Icon, type IconName } from './icons';
 import { datasetName } from '../lib/dataset';
 import { PEER_KIND_TH } from '../lib/labels';
 import { slotColor } from '../lib/palette';
@@ -46,10 +47,20 @@ export function TargetTag({ ds }: { ds: Pick<Dataset, 'slot' | 'label' | 'target
   );
 }
 
-export function Kpi({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
+/** Metric families: each colours a tile's rule and icon (the text stays in ink). */
+export type KpiTone = 'call' | 'sms' | 'night' | 'time' | 'people' | 'place' | 'device' | 'data';
+
+export function Kpi({ label, value, hint, tone, icon }: { label: string; value: ReactNode; hint?: ReactNode; tone?: KpiTone; icon?: IconName }) {
   return (
-    <div className="kpi">
-      <div className="label">{label}</div>
+    <div className="kpi" data-tone={tone}>
+      <div className="label">
+        {icon && (
+          <span className="kpi-icon">
+            <Icon name={icon} size={15} />
+          </span>
+        )}
+        <span>{label}</span>
+      </div>
       <div className="value">{value}</div>
       {hint && <div className="hint">{hint}</div>}
     </div>
