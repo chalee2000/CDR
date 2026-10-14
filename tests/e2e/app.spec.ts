@@ -234,6 +234,42 @@ test('link chart: search, details and a person profile saved to and opened from 
   expect(errors).toEqual([]);
 });
 
+test('file panel: put away from the top bar or its own button, shown again, remembered', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(APP);
+  const side = page.getByRole('complementary', { name: 'ไฟล์และการตั้งค่า' });
+  // Without a file the panel is the way in: there is nothing to hide yet.
+  await expect(side).toBeVisible();
+  await expect(page.getByRole('button', { name: /ซ่อนแถบไฟล์/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+
+  const main = page.getByRole('main');
+  const narrow = (await main.boundingBox())!.width;
+  await page.getByRole('button', { name: /ซ่อนแถบไฟล์/ }).click();
+  await expect(side).toBeHidden();
+  await expect.poll(async () => (await main.boundingBox())!.width).toBeGreaterThan(narrow + 250);
+  const toggle = page.getByRole('button', { name: /แสดงแถบไฟล์/ });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+  // The choice survives a reload (a preference, like the theme); the data does not.
+  await page.reload();
+  await expect(side).toBeVisible();
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  await expect(side).toBeHidden();
+
+  await page.getByRole('button', { name: /แสดงแถบไฟล์/ }).click();
+  await expect(side).toBeVisible();
+  await expect(side.getByText('เป้าหมาย (3)')).toBeVisible();
+
+  // The button in the panel's corner does the same; the keyboard lands on the top bar.
+  await side.getByRole('button', { name: /ซ่อนแถบนี้/ }).click();
+  await expect(side).toBeHidden();
+  await expect(page.getByRole('button', { name: /แสดงแถบไฟล์/ })).toBeFocused();
+  await page.getByRole('button', { name: /แสดงแถบไฟล์/ }).click();
+  await expect(side).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test('call burst tab: bursts, burst details and bursts of several targets at once', async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto(APP);

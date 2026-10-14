@@ -199,6 +199,21 @@ h4 {
   overflow-y: auto;
 }
 
+/* Put away from the top bar or from its own corner; the content takes the width. */
+.layout.side-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.layout.side-hidden .sidebar {
+  display: none;
+}
+
+.side-hide {
+  align-self: flex-end;
+  margin-bottom: -10px;
+  color: var(--ink-2);
+}
+
 .main {
   min-width: 0;
   padding: 16px 20px 40px;
@@ -231,6 +246,20 @@ h4 {
   }
   .topbar {
     flex-wrap: wrap;
+  }
+  /* The top bar wraps, so its buttons land anywhere: open the backup menu
+     across the whole bar instead of from the button. */
+  .menu-wrap {
+    position: static;
+  }
+  .menu,
+  .menu.left {
+    left: 16px;
+    right: 16px;
+    top: 100%;
+    width: auto;
+    min-width: 0;
+    max-width: none;
   }
 }
 

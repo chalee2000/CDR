@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { exportAnalysisXlsx, exportFileName } from './lib/export/excel';
 import { BackupMenu, RestoreDialog } from './components/Backup';
 import { ContactDrawer } from './components/ContactDrawer';
@@ -31,6 +31,9 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
+
+// A layout preference, like the theme: the file panel can be put away.
+const SIDEBAR_KEY = 'cdr-analyzer:sidebar';
 
 function Welcome() {
   const { loadSamples } = useStore();
@@ -102,6 +105,27 @@ export function App() {
   const [tab, setTab] = useState<TabId>('overview');
   const [exporting, setExporting] = useState(false);
   const active = TABS.find((t) => t.id === tab)!;
+  const [sideHidden, setSideHidden] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === 'hidden';
+    } catch {
+      return false;
+    }
+  });
+  const sideToggle = useRef<HTMLButtonElement>(null);
+  // With no file loaded the panel is the way in, so it stays.
+  const hasData = datasets.length > 0;
+  const sideShown = !hasData || !sideHidden;
+  const setSide = (shown: boolean) => {
+    setSideHidden(!shown);
+    try {
+      localStorage.setItem(SIDEBAR_KEY, shown ? 'shown' : 'hidden');
+    } catch {
+      /* storage unavailable: the choice simply does not persist */
+    }
+    // The button that was pressed may be gone: keep the keyboard on the top bar.
+    if (!shown) setTimeout(() => sideToggle.current?.focus(), 0);
+  };
 
   const exportXlsx = async () => {
     setExporting(true);
@@ -116,6 +140,18 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
+        {hasData && (
+          <button
+            ref={sideToggle}
+            className="btn small no-print"
+            type="button"
+            aria-expanded={sideShown}
+            aria-controls="side-panel"
+            onClick={() => setSide(!sideShown)}
+          >
+            {sideShown ? '◀ ซ่อนแถบไฟล์' : '▶ แสดงแถบไฟล์'}
+          </button>
+        )}
         <div className="brand">
           <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
             <rect width="28" height="28" rx="7" fill="var(--accent)" />
@@ -149,8 +185,13 @@ export function App() {
         )}
         <ThemeSwitch />
       </header>
-      <div className="layout">
-        <aside className="sidebar" aria-label="ไฟล์และการตั้งค่า">
+      <div className={`layout${sideShown ? '' : ' side-hidden'}`}>
+        <aside className="sidebar" id="side-panel" aria-label="ไฟล์และการตั้งค่า">
+          {hasData && (
+            <button className="btn small ghost side-hide" type="button" onClick={() => setSide(false)}>
+              ซ่อนแถบนี้ ◀
+            </button>
+          )}
           <ImportPanel />
           <DatasetList />
           <ProfilePanel />

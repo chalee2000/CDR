@@ -243,7 +243,7 @@ export function NetworkView() {
               className={`input${miss ? ' invalid' : ''}`}
               type="search"
               list="link-search-options"
-              placeholder="ค้นหาเลขหมาย ชื่อ หรือเลขบัตร"
+              placeholder="ค้นหาเลข ชื่อ หรือเลขบัตร"
               aria-label="ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง"
               value={query}
               onChange={(e) => {
