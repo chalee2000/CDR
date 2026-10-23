@@ -68,6 +68,12 @@ test('sample data: every tab renders without errors', async ({ page }) => {
   await expect.poll(zoom).toBe(country);
   await page.getByRole('group', { name: 'ขอบเขตแผนที่' }).getByRole('button', { name: 'ทุกเป้าหมาย' }).click();
   await expect(page.locator('.peer-square').first()).toBeVisible();
+  // The other party's squares share one slate fill, never a target's colour;
+  // the border carries the target's colour.
+  const fills = await page.locator('.peer-square span').evaluateAll((els) => [...new Set(els.map((e) => getComputedStyle(e).backgroundColor))]);
+  expect(fills).toEqual(['rgb(47, 55, 71)']);
+  const borders = await page.locator('.peer-square span').evaluateAll((els) => [...new Set(els.map((e) => getComputedStyle(e).borderTopColor))]);
+  expect(borders).not.toContain('rgb(47, 55, 71)');
   // A name typed in for the other party shows next to its number.
   await page.locator('.peer-square').first().click({ force: true });
   const popup = page.locator('.leaflet-popup-content');

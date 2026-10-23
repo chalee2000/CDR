@@ -36,6 +36,13 @@ interface Props {
   fitKey: string;
 }
 
+/**
+ * Fill of the other party's squares in both themes: a neutral slate, apart
+ * from every target colour by lightness (so for colour-blind readers too).
+ * Kept in step with `.legend-shape.peer` in styles.css.
+ */
+const PEER_FILL = '#2f3747';
+
 /** The whole of Thailand: where the map opens and where "ทั้งประเทศ" goes back to. */
 const THAILAND = L.latLngBounds([
   [5.6, 97.3],
@@ -170,12 +177,14 @@ export function MapView({ sites, paths, showBasemap, mode, fitKey }: Props) {
       const tip = `${escapeHtml(s.label)}${s.approx ? ' (ตำแหน่งโดยประมาณ)' : ''}`;
       const popup = `<strong>${escapeHtml(s.label)}</strong><br>${s.lines.map(escapeHtml).join('<br>')}${s.approx ? `<br><em>ไม่มีพิกัดในไฟล์ — แสดงที่จุดกลาง${approxLevelTh(s.approxLevel)}ตามชื่อพื้นที่ในไฟล์</em>` : ''}`;
       if (s.shape === 'square') {
+        // The other party's positions: one neutral fill, never a target's
+        // colour; the border carries the target it belongs to.
         const side = Math.round(12 + 12 * Math.sqrt(s.count / maxSquare));
         L.marker([s.lat, s.lon], {
           icon: L.divIcon({
             className: 'peer-square',
             iconSize: [side, side],
-            html: `<span style="background:${color};opacity:${showingPath ? 0.3 : s.approx ? 0.5 : 0.9};border-color:${c.surface}"></span>`,
+            html: `<span style="background:${PEER_FILL};opacity:${showingPath ? 0.3 : s.approx ? 0.5 : 0.9};border-color:${color}"></span>`,
           }),
           keyboard: false,
         })

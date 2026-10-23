@@ -162,7 +162,7 @@ export function LocationsView() {
           {peerCount > 0 && (
             <label className="check" style={{ alignItems: 'center' }}>
               <input type="checkbox" checked={showPeers} onChange={(e) => setShowPeers(e.target.checked)} />
-              <i className="legend-shape" aria-hidden="true" /> ตำแหน่งของคู่สาย ({fmtInt(peerCount)} เสา)
+              <i className="legend-shape peer" aria-hidden="true" /> ตำแหน่งของคู่สาย ({fmtInt(peerCount)} เสา{scope === 'all' ? ' · ขอบสีตามเป้าหมาย' : ''})
             </label>
           )}
         </div>
