@@ -477,74 +477,236 @@ export function layoutFor(kind: LayoutKind, net: Network): LinkLayout {
   }
 }
 
+/** First ring of a packed disc: room for the target's own label below it. */
+const PACK_R0 = 100;
+/** At most this share of a ring is kept clear for lines to other discs. */
+const MAX_CORRIDORS = 1 / 3;
+/** The first ring keeps this far either side of straight down clear for the target's name. */
+const NAME_SPOT = Math.PI / 4.5;
+/** Room beside a packed chart for the labels of its outermost contacts. */
+const LABEL_ROOM = 70;
+
 /**
- * Packed: each target is a disc with its own contacts on a sunflower spiral
- * around it (strongest nearest), each set of shared contacts its own disc
- * next to the first of its targets, and the discs packed in rows to about
- * the shape of a screen. Nothing is wasted on empty space.
+ * Packed: each target is a disc of tidy rings, its strongest contacts on the
+ * inner ring. A contact shared with other targets lives in the disc of the
+ * target it talks to most, on the outer ring, on the side facing the others,
+ * so its other links only cross the gap. Discs sit in a table, rows and
+ * columns aligned, and targets that share contacts or call each other are
+ * placed next to each other. Every ring keeps a gap towards each such
+ * neighbour, so the lines between discs reach the targets without running
+ * over contacts.
  */
 export function packedLayout(net: Network): LinkLayout {
   const g = classify(net);
   const pos = new Map<string, Point>();
-  // Area each contact takes on the spiral: hexagonal packing at MIN_GAP.
-  const cellArea = 1.08 * (Math.sqrt(3) / 2) * MIN_GAP * MIN_GAP;
-  const spiral = (n: number, inner: number) => Array.from({ length: n }, (_, i) => Math.sqrt(inner * inner + (cellArea * (i + 0.5)) / Math.PI));
-  interface Disc {
-    centre?: string;
-    members: string[];
-    radii: number[];
-    r: number;
+  const labelSide: NonNullable<LinkLayout['labelSide']> = new Map();
+  const targets = g.order;
+  const k = targets.length;
+  if (k === 0) {
+    looseRow(g.loose, 0, pos);
+    return { pos, bounds: boundsOf(pos) };
   }
-  const disc = (centre: string | undefined, members: string[]): Disc => {
-    const radii = spiral(members.length, centre ? TARGET_GAP : 0);
-    const r = Math.max(centre ? TARGET_GAP * 0.6 : 0, (radii[radii.length - 1] ?? 0) + MIN_GAP / 2);
-    return { centre, members, radii, r };
-  };
-  // Shared sets follow the first of their targets in the drawing order.
-  const sharedAfter = new Map<string, string[][]>();
-  const rank = new Map(g.order.map((t, i) => [t, i]));
-  for (const [key, ids] of [...g.shared].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const first = key.split('\u0000').sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0))[0];
-    if (!sharedAfter.has(first)) sharedAfter.set(first, []);
-    sharedAfter.get(first)!.push(ids);
-  }
-  const discs: Disc[] = [];
-  for (const t of g.order) {
-    discs.push(disc(t, g.exclusive.get(t) ?? []));
-    for (const ids of sharedAfter.get(t) ?? []) discs.push(disc(undefined, ids));
-  }
-  if (g.loose.length) discs.push(disc(undefined, g.loose));
+  const rank = new Map(targets.map((t, i) => [t, i]));
 
-  // Shelf packing to about 16:9.
-  const gap = MIN_GAP * 0.6;
-  const area = discs.reduce((a, d) => a + (2 * d.r + gap) ** 2, 0);
-  const width = Math.max(Math.sqrt((area * 16) / 9), ...discs.map((d) => 2 * d.r));
-  const rows: { discs: Disc[]; w: number; h: number }[] = [];
-  for (const d of discs) {
-    const row = rows[rows.length - 1];
-    const w = 2 * d.r;
-    if (row && row.w + gap + w <= width) {
-      row.discs.push(d);
-      row.w += gap + w;
-      row.h = Math.max(row.h, w);
-    } else rows.push({ discs: [d], w, h: w });
-  }
-  let y = 0;
-  for (const row of rows) {
-    let x = -row.w / 2;
-    for (const d of row.discs) {
-      const c = { x: x + d.r, y: y + row.h / 2 };
-      if (d.centre) pos.set(d.centre, c);
-      d.members.forEach((id, i) => {
-        const a = i * GOLDEN - Math.PI / 2;
-        pos.set(id, { x: c.x + d.radii[i] * Math.cos(a), y: c.y + d.radii[i] * Math.sin(a) });
-      });
-      x += 2 * d.r + gap;
+  // A shared contact's home: the target it talks to most.
+  const homed = new Map<string, string[]>(targets.map((t) => [t, []]));
+  const others = new Map<string, Map<string, number>>();
+  for (const ids of g.shared.values()) {
+    for (const id of ids) {
+      const ls = [...(g.links.get(id) ?? [])].filter(([t]) => rank.has(t)).sort((a, b) => b[1] - a[1] || rank.get(a[0])! - rank.get(b[0])!);
+      homed.get(ls[0][0])!.push(id);
+      others.set(id, new Map(ls.slice(1)));
     }
-    y += row.h + gap;
+  }
+  for (const ids of homed.values()) byWeight(ids, g.total);
+
+  // How strongly two targets belong together: contacts in common, a direct link.
+  const tie = new Map<string, number>();
+  const bump = (a: string, b: string, v: number) => {
+    if (a !== b && rank.has(a) && rank.has(b)) tie.set(pairKey(a, b), (tie.get(pairKey(a, b)) ?? 0) + v);
+  };
+  for (const [key, ids] of g.shared) {
+    const ts = key.split('\u0000');
+    for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) bump(ts[i], ts[j], ids.length);
+  }
+  for (const e of net.edges) if (g.targetIds.has(e.source) && g.targetIds.has(e.target)) bump(e.source, e.target, 2);
+  const partners = new Map<string, string[]>(
+    targets.map((t) => [
+      t,
+      targets.filter((u) => u !== t && tie.has(pairKey(t, u))).sort((a, b) => tie.get(pairKey(t, b))! - tie.get(pairKey(t, a))! || rank.get(a)! - rank.get(b)!),
+    ]),
+  );
+
+  // Lines coming into each disc from each neighbour: its contacts homed there
+  // that also talk to this target, and a direct link. Busy corridors are wider.
+  const incoming = new Map<string, number>();
+  for (const [u, ids] of homed) for (const id of ids) for (const t of others.get(id)!.keys()) incoming.set(`${t}>${u}`, (incoming.get(`${t}>${u}`) ?? 0) + 1);
+  for (const e of net.edges) {
+    if (!g.targetIds.has(e.source) || !g.targetIds.has(e.target)) continue;
+    incoming.set(`${e.source}>${e.target}`, (incoming.get(`${e.source}>${e.target}`) ?? 0) + 1);
+    incoming.set(`${e.target}>${e.source}`, (incoming.get(`${e.target}>${e.source}`) ?? 0) + 1);
+  }
+  const corridorWidth = (t: string, u: string) => Math.min(3, 1 + Math.floor((incoming.get(`${t}>${u}`) ?? 0) / 6));
+
+  // Rings of a disc: slots MIN_GAP apart, some kept clear for corridors.
+  const ringSlots = (r: number) => Math.max(1, Math.floor((2 * Math.PI * (PACK_R0 + r * MIN_GAP)) / MIN_GAP));
+  const corridorsOn = (r: number, t: string) =>
+    Math.min(
+      partners.get(t)!.reduce((s, u) => s + corridorWidth(t, u), 0),
+      Math.floor(ringSlots(r) * MAX_CORRIDORS),
+    );
+  const members = (t: string) => [...(g.exclusive.get(t) ?? []), ...homed.get(t)!];
+  const ringsOf = (t: string) => {
+    let left = members(t).length;
+    let r = 0;
+    // The first ring also leaves room under the target for its name.
+    while (left > 0) left -= ringSlots(r) - corridorsOn(r, t) - (r === 0 ? 4 : 0), r++;
+    return r;
+  };
+  const radius = new Map(targets.map((t) => [t, ringsOf(t) ? PACK_R0 + (ringsOf(t) - 1) * MIN_GAP + MIN_GAP / 2 : TARGET_GAP * 0.6]));
+
+  // The table: columns for about 16:9, then targets swapped between cells
+  // until those that belong together are as close as they can be.
+  let cols = 1;
+  let best = Infinity;
+  for (let c = 1; c <= k; c++) {
+    // About 16:9, and few empty cells (they leave holes in the picture).
+    const score = Math.abs(Math.log((c / Math.ceil(k / c)) / (16 / 9))) + (0.3 * (c * Math.ceil(k / c) - k)) / k;
+    if (score < best - 1e-9) [cols, best] = [c, score];
+  }
+  const rows = Math.ceil(k / cols);
+  const cellOf = new Map<string, number>();
+  const occupant: (string | undefined)[] = Array.from({ length: rows * cols }, () => undefined);
+  targets.forEach((t, i) => {
+    const row = Math.floor(i / cols);
+    const col = row % 2 ? cols - 1 - (i % cols) : i % cols;
+    cellOf.set(t, row * cols + col);
+    occupant[row * cols + col] = t;
+  });
+  const dist = (a: number, b: number) => Math.hypot(Math.floor(a / cols) - Math.floor(b / cols), (a % cols) - (b % cols));
+  const costOf = (t: string, cell: number, skip?: string) =>
+    partners.get(t)!.reduce((s, u) => (u === skip ? s : s + tie.get(pairKey(t, u))! * dist(cell, cellOf.get(u)!)), 0);
+  for (let pass = 0; pass < 60; pass++) {
+    let improved = false;
+    for (let i = 0; i < occupant.length; i++) {
+      for (let j = i + 1; j < occupant.length; j++) {
+        const a = occupant[i];
+        const b = occupant[j];
+        if (!a && !b) continue;
+        const before = (a ? costOf(a, i, b) : 0) + (b ? costOf(b, j, a) : 0);
+        const after = (a ? costOf(a, j, b) : 0) + (b ? costOf(b, i, a) : 0);
+        if (after < before - 1e-9) {
+          occupant[i] = b;
+          occupant[j] = a;
+          if (a) cellOf.set(a, j);
+          if (b) cellOf.set(b, i);
+          improved = true;
+        }
+      }
+    }
+    if (!improved) break;
+  }
+
+  // Rows and columns as wide as their largest disc (empty ones dropped).
+  const usedCols = [...new Set([...cellOf.values()].map((c) => c % cols))].sort((a, b) => a - b);
+  const usedRows = [...new Set([...cellOf.values()].map((c) => Math.floor(c / cols)))].sort((a, b) => a - b);
+  const colW = usedCols.map((c) => Math.max(...targets.filter((t) => cellOf.get(t)! % cols === c).map((t) => 2 * radius.get(t)!)));
+  const rowH = usedRows.map((r) => Math.max(...targets.filter((t) => Math.floor(cellOf.get(t)! / cols) === r).map((t) => 2 * radius.get(t)!)));
+  const offsets = (sizes: number[]) => {
+    const out: number[] = [];
+    let at = 0;
+    for (const s of sizes) {
+      out.push(at + s / 2);
+      at += s + COL_W;
+    }
+    return out;
+  };
+  const xs = offsets(colW);
+  const ys = offsets(rowH);
+  const centre = new Map(targets.map((t) => [t, { x: xs[usedCols.indexOf(cellOf.get(t)! % cols)], y: ys[usedRows.indexOf(Math.floor(cellOf.get(t)! / cols))] }]));
+  for (const [t, c] of centre) pos.set(t, { ...c });
+
+  // Fill each disc's rings, inner first; shared contacts take the outer slots
+  // facing their other targets, the rest spread evenly.
+  const angleTo = (a: Point, b: Point) => Math.atan2(b.y - a.y, b.x - a.x);
+  const gap = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  for (const t of targets) {
+    const c = centre.get(t)!;
+    const towards = partners.get(t)!.flatMap((u) => Array.from({ length: corridorWidth(t, u) }, () => angleTo(c, centre.get(u)!)));
+    // Spokes line up with the strongest neighbour, so its corridor is straight.
+    const base = towards[0] ?? -Math.PI / 2;
+    // Contacts that show their label (shared elsewhere) go after the rest, so
+    // their labels point out of the disc rather than over other contacts.
+    const flagged = new Set(net.nodes.filter((n) => n.shared).map((n) => n.id));
+    const exclusive = g.exclusive.get(t) ?? [];
+    const own = [...exclusive.filter((id) => !flagged.has(id)), ...exclusive.filter((id) => flagged.has(id))];
+    const shared = new Set(homed.get(t)!);
+    const slotAt = (r: number) => (j: number) => base + (2 * Math.PI * j) / ringSlots(r);
+    // Free slots of each ring: corridors kept clear and, on the first ring,
+    // the spot under the target where its name goes.
+    const rings: Set<number>[] = [];
+    for (let left = own.length + shared.size, r = 0; left > 0; r++) {
+      const slotAngle = slotAt(r);
+      const free = new Set(Array.from({ length: ringSlots(r) }, (_, j) => j));
+      const keep = (a: number) => {
+        let bestJ = -1;
+        for (const j of free) if (bestJ < 0 || gap(slotAngle(j), a) < gap(slotAngle(bestJ), a)) bestJ = j;
+        free.delete(bestJ);
+      };
+      for (const a of towards.slice(0, corridorsOn(r, t))) keep(a);
+      if (r === 0) for (const j of [...free]) if (gap(slotAngle(j), Math.PI / 2) < NAME_SPOT) free.delete(j);
+      rings.push(free);
+      left -= free.size;
+    }
+    // Shared contacts fill the outer rings, the strongest own contacts the inner ones.
+    const counts = rings.map((f) => f.size);
+    counts[counts.length - 1] -= counts.reduce((a, b) => a + b, 0) - own.length - shared.size;
+    const byRing: string[][] = counts.map(() => []);
+    const outerFirst = [...homed.get(t)!];
+    for (let r = counts.length - 1; r >= 0; r--) while (byRing[r].length < counts[r] && outerFirst.length) byRing[r].push(outerFirst.shift()!);
+    for (let r = 0; r < counts.length; r++) while (byRing[r].length < counts[r] && own.length) byRing[r].push(own.shift()!);
+    for (let r = 0; r < counts.length; r++) {
+      const R = PACK_R0 + r * MIN_GAP;
+      const slotAngle = slotAt(r);
+      const free = rings[r];
+      const ring = byRing[r];
+      const place = (id: string, j: number) => {
+        const a = slotAngle(j);
+        pos.set(id, { x: c.x + R * Math.cos(a), y: c.y + R * Math.sin(a) });
+        const cx = Math.cos(a);
+        const cy = Math.sin(a);
+        // Beside the icon unless nearly straight up or down: neighbours on a
+        // ring sit closer than a label is wide.
+        labelSide.set(id, cx > 0.25 ? 'right' : cx < -0.25 ? 'left' : cy > 0 ? 'bottom' : 'top');
+        free.delete(j);
+      };
+      for (const id of ring.filter((x) => shared.has(x))) {
+        let vx = 0;
+        let vy = 0;
+        for (const [u, w] of others.get(id) ?? []) {
+          const a = angleTo(c, centre.get(u)!);
+          vx += w * Math.cos(a);
+          vy += w * Math.sin(a);
+        }
+        const want = Math.atan2(vy, vx);
+        let bestJ = -1;
+        for (const j of free) if (bestJ < 0 || gap(slotAngle(j), want) < gap(slotAngle(bestJ), want)) bestJ = j;
+        place(id, bestJ);
+      }
+      const mine = ring.filter((x) => !shared.has(x));
+      const left = [...free].sort((a, b) => a - b);
+      mine.forEach((id, i) => place(id, left[Math.floor((i * left.length) / mine.length)]));
+    }
+  }
+
+  if (g.loose.length) {
+    const bottom = Math.max(...[...pos.values()].map((p) => p.y));
+    looseRow(g.loose, bottom + ROW_H * 1.5, pos);
   }
   separate(pos, g.targetIds);
-  return { pos, bounds: boundsOf(pos) };
+  // Labels point out of the discs: leave room for those on the outer edges.
+  const b = boundsOf(pos);
+  return { pos, bounds: { minX: b.minX - LABEL_ROOM, minY: b.minY - 18, maxX: b.maxX + LABEL_ROOM, maxY: b.maxY + 18 }, labelSide };
 }
 
 /** Columns of a contact block under each target, chosen so the whole chart is about 16:9. */

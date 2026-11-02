@@ -368,8 +368,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         symbol: [e.ba > 0 ? 'arrow' : 'none', e.ab > 0 ? 'arrow' : 'none'],
         symbolSize: Math.min(11, 6 + st.width) * Math.max(nodeScale, 0.7),
         // Links between two targets bow out so they never run through the
-        // shared contacts placed on the straight line between them.
-        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: st.tt ? 0.22 : 0 },
+        // shared contacts placed on the straight line between them; packed
+        // discs keep a clear corridor for them instead.
+        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: st.tt && input.layoutMode !== 'packed' ? 0.22 : 0 },
         label: linkLabel(e, st.showLabel, st.colour),
         emphasis: { label: { show: true }, lineStyle: { width: st.width + 1, opacity: 1 } },
         edge: e,

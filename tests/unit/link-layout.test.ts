@@ -220,6 +220,67 @@ describe('packed, hierarchy and organization layouts', () => {
     expect(Math.max(...t0) - Math.min(...t0)).toBeLessThanOrEqual(5 * 92);
   });
 
+  it('packed: discs in a table, with targets that share contacts next to each other', () => {
+    const n9 = synthetic(9, 12, 2);
+    const l = packedLayout(n9);
+    const ts = n9.nodes.filter((n) => n.isTarget).map((n) => l.pos.get(n.id)!);
+    const xs = [...new Set(ts.map((p) => Math.round(p.x)))].sort((a, b) => a - b);
+    const ys = [...new Set(ts.map((p) => Math.round(p.y)))].sort((a, b) => a - b);
+    expect(xs.length).toBeLessThan(9);
+    expect(ys.length).toBeLessThan(9);
+    expect(xs.length * ys.length).toBeGreaterThanOrEqual(9);
+    // Neighbours around the ring of shared contacts sit in neighbouring cells.
+    const cell = (id: string) => [xs.indexOf(Math.round(l.pos.get(id)!.x)), ys.indexOf(Math.round(l.pos.get(id)!.y))];
+    let close = 0;
+    for (let t = 0; t < 9; t++) {
+      const [a, b] = [cell(`T${t}`), cell(`T${(t + 1) % 9}`)];
+      if (Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) <= 1) close++;
+    }
+    expect(close).toBeGreaterThanOrEqual(8);
+  });
+
+  it('packed: a shared contact lives with the target it talks to most, on the side facing the other', () => {
+    const n9 = synthetic(9, 12, 2);
+    const l = packedLayout(n9);
+    for (const n of n9.nodes) {
+      if (!n.id.startsWith('S')) continue;
+      const t = Number(n.id.slice(1, n.id.indexOf('-')));
+      const home = `T${t}`;
+      const other = `T${(t + 1) % 9}`;
+      expect(nearestTarget(n9, l, n.id)).toBe(home);
+      const p = l.pos.get(n.id)!;
+      const h = l.pos.get(home)!;
+      const o = l.pos.get(other)!;
+      expect((p.x - h.x) * (o.x - h.x) + (p.y - h.y) * (o.y - h.y)).toBeGreaterThan(0);
+    }
+  });
+
+  it('packed: a clear corridor for the line between two targets, room under each target for its name, labels pointing out', () => {
+    const net = synthetic(4, 20);
+    net.edges.push(edge('T0', 'T1', 9));
+    const l = packedLayout(net);
+    const a = l.pos.get('T0')!;
+    const b = l.pos.get('T1')!;
+    const near = (p: { x: number; y: number }) => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+      return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+    };
+    for (const n of net.nodes) if (!n.isTarget) expect(near(l.pos.get(n.id)!)).toBeGreaterThan(0.8 * MIN_GAP);
+    for (const n of net.nodes) {
+      if (n.isTarget) continue;
+      const home = l.pos.get(n.id.slice(0, 2))!;
+      const p = l.pos.get(n.id)!;
+      const d = Math.hypot(p.x - home.x, p.y - home.y);
+      const cx = (p.x - home.x) / d;
+      const cy = (p.y - home.y) / d;
+      // Nothing on the first ring straight under the target.
+      if (d < 100 + MIN_GAP / 2) expect(Math.abs(Math.atan2(cy, cx) - Math.PI / 2)).toBeGreaterThanOrEqual(Math.PI / 4.5 - 1e-9);
+      expect(l.labelSide?.get(n.id)).toBe(cx > 0.25 ? 'right' : cx < -0.25 ? 'left' : cy > 0 ? 'bottom' : 'top');
+    }
+  });
+
   it('packed: own contacts closest to their target, and tighter than peacock', () => {
     const n9 = synthetic(9, 12, 2);
     const l = packedLayout(n9);
