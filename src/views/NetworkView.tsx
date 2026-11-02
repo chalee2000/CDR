@@ -14,6 +14,7 @@ import type { LinkColorBy, LinkLayoutMode, LinkSelection } from '../components/l
 import { downloadDataUrl } from '../components/download';
 import { Caveat, NumberLink, Section, Swatch } from '../components/bits';
 import { useEffectiveTheme, useStore } from '../state/store';
+import { LinkLayoutPicker } from '../components/LinkLayoutPicker';
 
 export const WEIGHT_UNIT: Record<EdgeWeight, string> = { events: 'ครั้ง', calls: 'สาย', talk: 'นาที' };
 
@@ -223,14 +224,7 @@ export function NetworkView() {
           </div>
         </header>
         <div className="link-toolbar no-print" role="toolbar" aria-label="เครื่องมือผัง">
-          <div className="seg" role="group" aria-label="การจัดวาง">
-            <button type="button" aria-pressed={layoutMode === 'hub'} onClick={() => setLayoutMode('hub')}>
-              กลุ่มรอบเป้าหมาย
-            </button>
-            <button type="button" aria-pressed={layoutMode === 'force'} onClick={() => setLayoutMode('force')}>
-              แรงดึงดูด
-            </button>
-          </div>
+          <LinkLayoutPicker value={layoutMode} onChange={setLayoutMode} />
           <form
             className="link-search"
             role="search"

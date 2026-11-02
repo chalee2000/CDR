@@ -145,6 +145,13 @@ test('link chart: search, details and a person profile saved to and opened from 
   await openTab(page, 'ผังเครือข่าย');
   const toolbar = page.getByRole('toolbar', { name: 'เครื่องมือผัง' });
   await expect(toolbar).toBeVisible();
+  // Five layouts, as investigation-chart users know them; each draws the chart.
+  const layouts = toolbar.getByRole('group', { name: 'การจัดวาง' });
+  for (const name of [/^Packed/, /^Hierarchy/, /^Organization/, /^แรงดึงดูด/, /^Peacock/]) {
+    await layouts.getByRole('button', { name }).click();
+    await expect(layouts.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('img', { name: /^ผังความเชื่อมโยง \d/ })).toBeVisible();
+  }
 
   await page.getByLabel('ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง').fill('0860000111');
   await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
@@ -248,6 +255,11 @@ test('link chart: search, details and a person profile saved to and opened from 
   await page.keyboard.press('Escape');
 
   await openTab(page, 'เชื่อมโยงข้ามเป้าหมาย');
+  await expect(page.getByRole('img', { name: /^ผังผู้ติดต่อร่วม/ })).toBeVisible();
+  // The chart of shared contacts has the same choice of layouts.
+  const crossLayouts = page.getByRole('group', { name: 'การจัดวาง' });
+  await crossLayouts.getByRole('button', { name: /^Hierarchy/ }).click();
+  await expect(crossLayouts.getByRole('button', { name: /^Hierarchy/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('img', { name: /^ผังผู้ติดต่อร่วม/ })).toBeVisible();
   expect(errors).toEqual([]);
 });

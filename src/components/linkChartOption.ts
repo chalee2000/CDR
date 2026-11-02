@@ -1,5 +1,5 @@
 import type { EChartsCoreOption } from 'echarts/core';
-import type { LinkLayout } from '../lib/analysis/linkLayout';
+import { pairKey, type LayoutKind, type LinkLayout } from '../lib/analysis/linkLayout';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -10,7 +10,8 @@ import { chrome } from './Chart';
 import { escapeHtml } from './download';
 import { iconUrl, type Glyph, type IconSpec } from './linkIcons';
 
-export type LinkLayoutMode = 'hub' | 'force';
+/** hub = Peacock; packed, hierarchy and organization are fixed layouts too; force moves. */
+export type LinkLayoutMode = LayoutKind;
 export type LinkColorBy = 'role' | 'community';
 export type LinkSelection = { type: 'node'; id: string } | { type: 'edge'; source: string; target: string };
 
@@ -43,7 +44,7 @@ const AUTO_ALL = 40;
 const TOP_LABELS_PER_TARGET = 5;
 const TOP_EDGE_LABELS = 30;
 
-export const edgeKey = (a: string, b: string) => (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`);
+export const edgeKey = pairKey;
 
 /** Rich-text safe label text (braces and bars delimit ECharts rich styles). */
 function labelText(s: string, max = 30): string {
@@ -267,7 +268,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       {
         type: 'graph',
         id: 'link',
-        layout: input.layoutMode === 'hub' ? 'none' : 'force',
+        layout: input.layoutMode === 'force' ? 'force' : 'none',
         roam: true,
         draggable: true,
         nodeScaleRatio: 0.55,

@@ -4,7 +4,7 @@ import { parseWorkbook } from '../../src/lib/parsers';
 import { generateSamples, SAMPLE_TARGETS } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
-import { hubLayout, MIN_GAP, TARGET_GAP, type LinkLayout } from '../../src/lib/analysis/linkLayout';
+import { hierarchyLayout, hubLayout, layoutFor, MIN_GAP, organizationLayout, packedLayout, TARGET_GAP, type LinkLayout } from '../../src/lib/analysis/linkLayout';
 
 const datasets = generateSamples().map((wb, i) => {
   const out = parseWorkbook(wb, 'local');
@@ -110,5 +110,80 @@ describe('hub layout', () => {
     expect(performance.now() - t0).toBeLessThan(3000);
     expect(layout.pos.size).toBe(big.nodes.length);
     expect(minDistances(big, layout).contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+  });
+});
+
+const area = (l: LinkLayout) => (l.bounds.maxX - l.bounds.minX) * (l.bounds.maxY - l.bounds.minY);
+
+/** Nearest target to a point along x only, or in the plane. */
+function nearestTarget(net: Network, l: LinkLayout, id: string, xOnly = false) {
+  const p = l.pos.get(id)!;
+  let best = '';
+  let bestD = Infinity;
+  for (const n of net.nodes) {
+    if (!n.isTarget) continue;
+    const q = l.pos.get(n.id)!;
+    const d = xOnly ? Math.abs(p.x - q.x) : Math.hypot(p.x - q.x, p.y - q.y);
+    if (d < bestD) [best, bestD] = [n.id, d];
+  }
+  return best;
+}
+
+describe('packed, hierarchy and organization layouts', () => {
+  const net = buildNetwork(datasets, DEFAULT_SETTINGS, DEFAULT_NETWORK_OPTIONS);
+  const layouts = { packed: packedLayout, hierarchy: hierarchyLayout, organization: organizationLayout };
+
+  for (const [name, fn] of Object.entries(layouts)) {
+    it(`${name}: every node placed, the same way every time, kept apart, at any size`, () => {
+      for (const n of [net, synthetic(1, 60), synthetic(1, 0), synthetic(9, 12, 2), synthetic(3, 250, 10), { nodes: [], edges: [], communities: 0, modularity: 0 }]) {
+        const a = fn(n);
+        const b = fn(n);
+        expect(a.pos.size).toBe(n.nodes.length);
+        for (const [id, p] of a.pos) {
+          expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+          expect(b.pos.get(id)).toEqual(p);
+        }
+        if (n.nodes.length > 1) {
+          const d = minDistances(n, a);
+          expect(d.contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+          expect(d.toTarget).toBeGreaterThanOrEqual(0.9 * TARGET_GAP);
+        }
+      }
+      expect(layoutFor(name as 'packed', net).pos).toEqual(fn(net).pos);
+    });
+  }
+
+  it('hierarchy: targets on top, shared contacts below them, each own contact under its target', () => {
+    const n9 = synthetic(9, 12, 2);
+    const l = hierarchyLayout(n9);
+    const ty = l.pos.get('T0')!.y;
+    for (let t = 0; t < 9; t++) expect(l.pos.get(`T${t}`)!.y).toBe(ty);
+    const sharedY = n9.nodes.filter((n) => n.id.startsWith('S')).map((n) => l.pos.get(n.id)!.y);
+    const ownY = n9.nodes.filter((n) => /^T\dC/.test(n.id)).map((n) => l.pos.get(n.id)!.y);
+    expect(Math.min(...sharedY)).toBeGreaterThan(ty);
+    expect(Math.max(...sharedY)).toBeLessThan(Math.min(...ownY));
+    for (const n of n9.nodes) if (/^T\dC/.test(n.id)) expect(nearestTarget(n9, l, n.id, true)).toBe(n.id.slice(0, 2));
+  });
+
+  it('organization: shared contacts above the targets, own contacts hanging below their target in branches at most five wide', () => {
+    const n9 = synthetic(9, 12, 2);
+    const l = organizationLayout(n9);
+    const ty = l.pos.get('T0')!.y;
+    for (const n of n9.nodes) {
+      if (n.id.startsWith('S')) expect(l.pos.get(n.id)!.y).toBeLessThan(ty);
+      if (/^T\dC/.test(n.id)) {
+        expect(l.pos.get(n.id)!.y).toBeGreaterThan(ty);
+        expect(nearestTarget(n9, l, n.id, true)).toBe(n.id.slice(0, 2));
+      }
+    }
+    const t0 = n9.nodes.filter((n) => n.id.startsWith('T0C')).map((n) => l.pos.get(n.id)!.x);
+    expect(Math.max(...t0) - Math.min(...t0)).toBeLessThanOrEqual(5 * 92);
+  });
+
+  it('packed: own contacts closest to their target, and tighter than peacock', () => {
+    const n9 = synthetic(9, 12, 2);
+    const l = packedLayout(n9);
+    for (const n of n9.nodes) if (/^T\dC/.test(n.id)) expect(nearestTarget(n9, l, n.id)).toBe(n.id.slice(0, 2));
+    expect(area(l)).toBeLessThan(area(hubLayout(n9)));
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ECharts } from 'echarts/core';
-import { hubLayout } from '../lib/analysis/linkLayout';
+import { layoutFor } from '../lib/analysis/linkLayout';
 import type { Network } from '../lib/analysis/network';
 import type { ThemeMode } from '../lib/palette';
 import type { ProfileMap } from '../lib/profiles';
@@ -63,7 +63,7 @@ export function LinkChart({
   expandable,
   onDoubleClick,
 }: Props) {
-  const layout = useMemo(() => hubLayout(network), [network]);
+  const layout = useMemo(() => layoutFor(layoutMode, network), [layoutMode, network]);
   // Photos decode asynchronously; redraw (keeping the view) once they are ready.
   const [photoTick, setPhotoTick] = useState(0);
   useEffect(() => onPhotoLoad(() => setPhotoTick((t) => t + 1)), []);

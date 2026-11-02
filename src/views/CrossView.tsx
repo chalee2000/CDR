@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { coLocations, commonContacts, directLinks, relayChains, sharedDevices, type CoLocation, type CommonContact, type DirectLink, type RelayChain, type SharedDevice } from '../lib/analysis/cross';
 import { CoordResolver } from '../lib/analysis/locations';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS } from '../lib/analysis/network';
@@ -7,13 +7,16 @@ import { fmtDate, fmtDateTime, fmtDuration, fmtTime, isoText } from '../lib/time
 import { fmtInt } from '../lib/util';
 import { DataTable, type Column } from '../components/DataTable';
 import { LinkChart } from '../components/LinkChart';
+import { LinkLayoutPicker } from '../components/LinkLayoutPicker';
 import { LinkLegend } from '../components/LinkLegend';
+import type { LinkLayoutMode } from '../components/linkChartOption';
 import { Caveat, NumberLink, Section, Swatch } from '../components/bits';
 import { useEffectiveTheme, useStore } from '../state/store';
 
 export function CrossView() {
   const { datasets, settings, coordImport, profiles, openPeer } = useStore();
   const mode = useEffectiveTheme();
+  const [layoutMode, setLayoutMode] = useState<LinkLayoutMode>('hub');
   const byId = useMemo(() => new Map(datasets.map((d) => [d.id, d])), [datasets]);
   // Targets with the contacts they share and their direct links only.
   const bridges = useMemo(() => buildNetwork(datasets, settings, { ...DEFAULT_NETWORK_OPTIONS, topN: 0, onlyShared: true }), [datasets, settings]);
@@ -112,7 +115,11 @@ export function CrossView() {
 
   return (
     <>
-      <Section title="ผังผู้ติดต่อร่วมและการติดต่อตรงระหว่างเป้าหมาย" sub="เฉพาะเลขหมายที่ติดต่อกับเป้าหมายตั้งแต่ 2 รายขึ้นไป · ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · คลิกเลขหมายเพื่อดูรายละเอียด · ดับเบิลคลิกผังเพื่อดูเต็มจอ">
+      <Section
+        title="ผังผู้ติดต่อร่วมและการติดต่อตรงระหว่างเป้าหมาย"
+        sub="เฉพาะเลขหมายที่ติดต่อกับเป้าหมายตั้งแต่ 2 รายขึ้นไป · ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · คลิกเลขหมายเพื่อดูรายละเอียด · ดับเบิลคลิกผังเพื่อดูเต็มจอ"
+        actions={bridges.edges.length > 0 && <LinkLayoutPicker value={layoutMode} onChange={setLayoutMode} />}
+      >
         {bridges.edges.length > 0 ? (
           <>
             <LinkLegend net={bridges} datasets={datasets} mode={mode} profiles={profiles} unit="ครั้ง" />
@@ -125,6 +132,7 @@ export function CrossView() {
                 yearStyle={y}
                 label={`ผังผู้ติดต่อร่วม ${bridges.nodes.length} เลขหมาย`}
                 height={440}
+                layoutMode={layoutMode}
                 allLabels
                 allEdgeLabels
                 expandable
