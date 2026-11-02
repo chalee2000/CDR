@@ -26,6 +26,27 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: join(SHOT_DIR, `${name}.png`), fullPage: true });
 }
 
+/** Pixels that clearly differ between two screenshots of the same size (decoded by the browser). */
+async function pixelsApart(page: Page, a: Buffer, b: Buffer): Promise<number> {
+  return page.evaluate(
+    async ([x, y]) => {
+      const read = async (b64: string) => {
+        const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+        const c = new OffscreenCanvas(img.width, img.height);
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        return ctx.getImageData(0, 0, img.width, img.height).data;
+      };
+      const [p, q] = await Promise.all([read(x), read(y)]);
+      if (p.length !== q.length) return Infinity;
+      let n = 0;
+      for (let i = 0; i < p.length; i += 4) if (Math.max(Math.abs(p[i] - q[i]), Math.abs(p[i + 1] - q[i + 1]), Math.abs(p[i + 2] - q[i + 2])) > 40) n++;
+      return n;
+    },
+    [a.toString('base64'), b.toString('base64')],
+  );
+}
+
 async function openTab(page: Page, name: string) {
   await page.getByRole('tab', { name, exact: true }).click();
   await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -328,6 +349,24 @@ test('link chart: pick numbers with a box, move them together, keep and put back
   await expect(status).not.toContainText('ย้ายแล้ว');
   expect((await look()).equals(before)).toBe(true);
   await page.getByRole('button', { name: 'ยกเลิกการเลือก' }).click();
+  await expect(status).toHaveText('');
+
+  // Hierarchy draws right-angled links; picking and moving works there too,
+  // and its links are worked out again for the new places.
+  const layouts = toolbar.getByRole('group', { name: 'การจัดวาง' });
+  await layouts.getByRole('button', { name: /^Hierarchy/ }).click();
+  await page.waitForTimeout(500);
+  await drag([box.x + box.width - 4, box.y + box.height - 4], [box.x + 4, box.y + 4]);
+  await expect(status).toContainText(`เลือก ${total} เลขหมาย`);
+  await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+  const tree = await look();
+  await drag(centre, [centre[0] - 50, centre[1] + 30]);
+  await expect(status).toContainText(`ย้ายแล้ว ${total} เลขหมาย`);
+  expect(await pixelsApart(page, await look(), tree)).toBeGreaterThan(10000);
+  // Put back, the picture is the same but for anti-aliasing where lines cross.
+  await page.getByRole('button', { name: 'คืนตำแหน่งเดิม' }).click();
+  expect(await pixelsApart(page, await look(), tree)).toBeLessThan(1000);
+  await layouts.getByRole('button', { name: /^Peacock/ }).click();
   await expect(status).toHaveText('');
 
   // The other tool drags the view with the left button, and is remembered.

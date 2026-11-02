@@ -4,7 +4,7 @@ import type { LinkLayoutMode } from './linkChartOption';
 const LAYOUTS: { mode: LinkLayoutMode; label: string; hint: string }[] = [
   { mode: 'hub', label: 'Peacock', hint: 'กลุ่มรอบเป้าหมาย: ผู้ติดต่อแผ่รอบเป้าหมาย ผู้ติดต่อร่วมอยู่ระหว่างเป้าหมาย' },
   { mode: 'packed', label: 'Packed', hint: 'อัดแน่นเป็นกลุ่ม: แต่ละเป้าหมายเป็นกลุ่มกลม วางชิดกัน ดูภาพรวมเมื่อมีหลายเป้าหมาย' },
-  { mode: 'hierarchy', label: 'Hierarchy', hint: 'ลำดับชั้น: เป้าหมายแถวบน ผู้ติดต่อร่วมแถวกลาง ผู้ติดต่อของแต่ละเป้าหมายด้านล่าง' },
+  { mode: 'hierarchy', label: 'Hierarchy', hint: 'ลำดับชั้น: เป้าหมายแถวบน ผู้ติดต่อเรียงแถวด้านล่าง ต่อด้วยเส้นหักมุมฉาก ผู้ติดต่อร่วมอยู่แถวกลาง' },
   { mode: 'organization', label: 'Organization', hint: 'ผังองค์กร: ผู้ติดต่อเรียงลงใต้เป้าหมายเป็นสาย ผู้ติดต่อร่วมอยู่แถวบน' },
   { mode: 'force', label: 'แรงดึงดูด', hint: 'แรงดึงดูด: จัดเองตามความสัมพันธ์ ลากย้ายได้' },
 ];

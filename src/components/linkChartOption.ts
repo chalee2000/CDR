@@ -1,6 +1,7 @@
 import type { EChartsCoreOption } from 'echarts/core';
 import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout, type Point } from '../lib/analysis/linkLayout';
 import { boxOf, chartFrame, unionBox, type Box } from '../lib/analysis/linkMove';
+import { routeTree } from '../lib/analysis/linkRoute';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -236,7 +237,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       label: {
         show,
         position: layout.labelSide?.get(n.id) ?? 'bottom',
-        distance: 4,
+        distance: layout.labelLower?.has(n.id) ? (dense ? 16 : 19) : 4,
         formatter: name ? `{n|${labelText(name)}}\n{d|${labelText(n.id, 24)}}` : `{d|${labelText(n.id, 24)}}`,
         rich: {
           n: { fontSize: n.isTarget ? 12.5 : dense ? 10.5 : 11.5, fontWeight: 600, color: ch.ink, lineHeight: dense ? 13 : 15 },
@@ -250,70 +251,131 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     };
   });
 
-  const links = net.edges.map((e) => {
+  // How each link looks, whether drawn straight or in right-angled pieces.
+  const routed = input.layoutMode === 'hierarchy';
+  const styleOf = (e: NetEdge) => {
     const key = edgeKey(e.source, e.target);
     const tt = targetIds.has(e.source) && targetIds.has(e.target);
     const owner = targetIds.has(e.source) ? e.source : e.target;
     const colour = tt ? ch.ink2 : input.colorBy === 'community' ? ch.other : slotColor(byId.get(owner)?.slot ?? 99, mode);
-    const focused = focusEdges?.has(key);
-    const dim = focusEdges && !focused;
-    // Links between targets matter but should not dominate the picture.
-    const width = 1.2 + 4.8 * (Math.log1p(e.weight) / Math.log1p(maxE)) + (tt ? 0.6 : 0) + (focused ? 1 : 0);
+    const focused = !!focusEdges?.has(key);
+    const dim = !!focusEdges && !focused;
+    // Links between targets matter but should not dominate the picture; a
+    // hierarchy keeps its lines thin, as an investigation chart does.
+    const ratio = Math.log1p(e.weight) / Math.log1p(maxE);
+    const width = (routed ? 1.1 + 3 * ratio : 1.2 + 4.8 * ratio + (tt ? 0.6 : 0)) + (focused ? 1 : 0);
     const ends = [byId.get(e.source), byId.get(e.target)];
     const keyEnd = ends.some((n) => n && !n.isTarget && (n.shared || profiles[n.id]));
     const important = tt || (!dense && keyEnd);
     // A dense chart labels only links that lead somewhere worth reading:
     // fan links' counts would sit on top of the fan's contacts.
     const strong = strongEdges.has(key) && (!dense || keyEnd);
-    const showLabel = !dim && (input.allEdgeLabels || net.edges.length <= AUTO_ALL || important || strong || !!focused);
-    return {
-      source: e.source,
-      target: e.target,
-      value: e.weight,
-      symbol: [e.ba > 0 ? 'arrow' : 'none', e.ab > 0 ? 'arrow' : 'none'],
-      symbolSize: Math.min(11, 6 + width) * Math.max(nodeScale, 0.7),
-      // Links between two targets bow out so they never run through the
-      // shared contacts placed on the straight line between them.
-      lineStyle: { color: colour, width, opacity: dim ? 0.06 : focused ? 0.95 : tt ? 0.75 : t.link, curveness: tt ? 0.22 : 0 },
-      label: {
-        show: showLabel,
-        formatter: fmtInt(e.weight),
-        fontSize: dense ? 9.5 : 10.5,
-        color: ch.ink,
-        backgroundColor: ch.surface,
-        borderColor: colour,
-        borderWidth: 1,
-        borderRadius: 8,
-        padding: [1, 5],
-        // Centred on the line like a link label in an investigation chart.
-        distance: 0,
-        verticalAlign: 'middle',
-      },
-      emphasis: { label: { show: true }, lineStyle: { width: width + 1, opacity: 1 } },
-      edge: e,
-    };
+    const showLabel = !dim && (input.allEdgeLabels || net.edges.length <= AUTO_ALL || important || strong || focused);
+    return { tt, colour, focused, dim, width, showLabel };
+  };
+  const linkLabel = (e: NetEdge, show: boolean, colour: string) => ({
+    show,
+    formatter: fmtInt(e.weight),
+    fontSize: dense ? 9.5 : 10.5,
+    color: ch.ink,
+    backgroundColor: ch.surface,
+    borderColor: colour,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: [1, 5],
+    // Centred on the line like a link label in an investigation chart.
+    distance: 0,
+    verticalAlign: 'middle',
   });
 
   // Two invisible points at the frame's corners fix what the chart is fitted to.
   const frame = fixed ? linkFrame(layout, input.view, compact, input.moved) : undefined;
+  const hidden = (id: string, x: number, y: number) => ({
+    id,
+    name: id,
+    x,
+    y,
+    value: 0,
+    symbol: 'none',
+    symbolSize: 0,
+    draggable: false,
+    label: { show: false },
+    tooltip: { trigger: 'none' },
+    emphasis: { disabled: true },
+  });
   const anchors = frame
     ? [
         [frame.minX, frame.minY],
         [frame.maxX, frame.maxY],
-      ].map(([fx, fy], i) => ({
-        id: FRAME_IDS[i],
-        name: FRAME_IDS[i],
-        x: fx,
-        y: fy,
-        value: 0,
-        symbol: 'none',
-        symbolSize: 0,
-        draggable: false,
-        label: { show: false },
-        tooltip: { show: false },
-        emphasis: { disabled: true },
-      }))
+      ].map(([fx, fy], i) => hidden(FRAME_IDS[i], fx, fy))
     : [];
+
+  let links: object[];
+  let bends: object[] = [];
+  if (routed) {
+    // Right-angled links: invisible corner points, and each link in straight
+    // pieces between them (worked out again whenever numbers are moved).
+    const at = new Map(net.nodes.map((n) => [n.id, (fixed && input.moved?.get(n.id)) || layout.pos.get(n.id) || { x: 0, y: 0 }]));
+    const routes = routeTree(net, at);
+    const clamp = (v: number, lo = -Infinity, hi = Infinity) => Math.max(lo, Math.min(hi, v));
+    bends = [...routes.bends].map(([id, p]) => hidden(id, clamp(p.x, frame?.minX, frame?.maxX), clamp(p.y, frame?.minY, frame?.maxY)));
+    const byKey = new Map(net.edges.map((e) => [edgeKey(e.source, e.target), e]));
+    links = routes.pieces.map((p) => {
+      const focused = !!focusEdges && p.edges.some((k) => focusEdges!.has(k));
+      const dim = !!focusEdges && !focused;
+      if (p.kind === 'bus') {
+        // A trunk or bus shared by a target's links: thin, in the target's colour.
+        const colour = input.colorBy === 'community' ? ch.other : slotColor(byId.get(p.owner ?? '')?.slot ?? 99, mode);
+        return {
+          source: p.source,
+          target: p.target,
+          symbol: ['none', 'none'],
+          lineStyle: { color: colour, width: focused ? 2.4 : 1.4, opacity: dim ? 0.06 : focused ? 0.95 : t.link, curveness: 0 },
+          label: { show: false },
+          tooltip: { trigger: 'none' },
+          emphasis: { disabled: true },
+        };
+      }
+      const e = byKey.get(p.edges[0])!;
+      const st = styleOf(e);
+      // On the short drop into a number the count stands upright just above
+      // it (a label in the middle would turn with the line).
+      const drop = routes.bends.has(p.source) && !routes.bends.has(p.target);
+      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7);
+      const label = { ...linkLabel(e, !!p.label && st.showLabel, st.colour), ...(drop ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {}) };
+      return {
+        source: p.source,
+        target: p.target,
+        value: e.weight,
+        // A drop always ends at the icon's edge (an invisible dot where there is
+        // no arrow; ECharts runs a bare line to the centre), so its count sits
+        // the same way above every number.
+        symbol: [p.arrows?.[0] ? 'arrow' : 'none', p.arrows?.[1] ? 'arrow' : drop ? 'circle' : 'none'],
+        symbolSize: [arrowSize, p.arrows?.[1] || !drop ? arrowSize : 0.1],
+        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: 0 },
+        label,
+        emphasis: { label: { show: !!p.label }, lineStyle: { width: st.width + 1, opacity: 1 } },
+        edge: e,
+      };
+    });
+  } else {
+    links = net.edges.map((e) => {
+      const st = styleOf(e);
+      return {
+        source: e.source,
+        target: e.target,
+        value: e.weight,
+        symbol: [e.ba > 0 ? 'arrow' : 'none', e.ab > 0 ? 'arrow' : 'none'],
+        symbolSize: Math.min(11, 6 + st.width) * Math.max(nodeScale, 0.7),
+        // Links between two targets bow out so they never run through the
+        // shared contacts placed on the straight line between them.
+        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: st.tt ? 0.22 : 0 },
+        label: linkLabel(e, st.showLabel, st.colour),
+        emphasis: { label: { show: true }, lineStyle: { width: st.width + 1, opacity: 1 } },
+        edge: e,
+      };
+    });
+  }
 
   const n = net.nodes.length;
   return {
@@ -357,10 +419,12 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
               }
             : undefined,
         labelLayout: { hideOverlap: true },
-        emphasis: { focus: 'adjacency', scale: 1.1, label: { show: true } },
+        // A hierarchy's links are pieces: fading all but the hovered one's
+        // neighbours would cut its lines short.
+        emphasis: { focus: routed ? 'none' : 'adjacency', scale: 1.1, label: { show: true } },
         blur: { itemStyle: { opacity: 0.14 }, lineStyle: { opacity: 0.05 }, label: { opacity: 0.1 } },
         edgeLabel: { show: false },
-        data: [...data, ...anchors],
+        data: [...data, ...anchors, ...bends],
         links,
       },
     ],
