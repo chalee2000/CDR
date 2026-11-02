@@ -366,6 +366,16 @@ test('link chart: pick numbers with a box, move them together, keep and put back
   // Put back, the picture is the same but for anti-aliasing where lines cross.
   await page.getByRole('button', { name: 'คืนตำแหน่งเดิม' }).click();
   expect(await pixelsApart(page, await look(), tree)).toBeLessThan(1000);
+  // The org chart too: its spines and stubs follow the moved numbers.
+  await layouts.getByRole('button', { name: /^Organization/ }).click();
+  await page.waitForTimeout(500);
+  await drag([box.x + box.width - 4, box.y + box.height - 4], [box.x + 4, box.y + 4]);
+  await expect(status).toContainText(`เลือก ${total} เลขหมาย`);
+  await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+  const org = await look();
+  await drag(centre, [centre[0] + 40, centre[1] - 30]);
+  await expect(status).toContainText(`ย้ายแล้ว ${total} เลขหมาย`);
+  expect(await pixelsApart(page, await look(), org)).toBeGreaterThan(10000);
   await layouts.getByRole('button', { name: /^Peacock/ }).click();
   await expect(status).toHaveText('');
 

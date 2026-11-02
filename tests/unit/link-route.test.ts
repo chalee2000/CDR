@@ -4,8 +4,8 @@ import { parseWorkbook } from '../../src/lib/parsers';
 import { generateSamples } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
-import { hierarchyLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
-import { DROP_STEP, routeTree, type Routes } from '../../src/lib/analysis/linkRoute';
+import { hierarchyLayout, organizationLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
+import { DROP_STEP, routeOrg, routeTree, type Routes } from '../../src/lib/analysis/linkRoute';
 
 const COL_W = 92;
 
@@ -213,5 +213,85 @@ describe('hierarchy: right-angled links', () => {
     // The contact moved above its target is reached by a line going up.
     const drop = routes.pieces.find((p) => p.target === 'T1C2')!;
     expect(where(routes, moved, drop.source).y).toBeGreaterThan(moved.get('T1C2')!.y);
+  });
+});
+
+describe('organization: an org chart with right-angled links', () => {
+  for (const [name, net] of cases) {
+    it(`${name}: square corners, every link joined up, no line through another number`, () => {
+      const layout = organizationLayout(net);
+      const { pos } = layout;
+      const routes = routeOrg(net, pos, layout.combs ?? new Map());
+      const real = new Set(net.nodes.map((n) => n.id));
+      const bad: string[] = [];
+      let nearest = Infinity;
+      for (const p of routes.pieces) {
+        const a = where(routes, pos, p.source);
+        const b = where(routes, pos, p.target);
+        const [dx, dy] = [Math.abs(a.x - b.x), Math.abs(a.y - b.y)];
+        if (!real.has(p.source) && !real.has(p.target)) {
+          if (Math.min(dx, dy) >= 0.2) bad.push(`slanted ${p.source} ${p.target}`);
+        }
+        // Into a number: level (a stub off a spine) or (nearly) straight down or up.
+        else if (Math.min(dx, dy) > 0.5 * Math.max(dx, dy) + 0.2) bad.push(`slanted into ${p.source} ${p.target}`);
+        for (const n of net.nodes) if (n.id !== p.source && n.id !== p.target) nearest = Math.min(nearest, distToSegment(pos.get(n.id)!, a, b));
+      }
+      expect(bad).toEqual([]);
+      expect(nearest).toBeGreaterThanOrEqual(18);
+
+      const byKey = new Map<string, typeof routes.pieces>();
+      for (const p of routes.pieces) for (const k of p.edges) byKey.set(k, [...(byKey.get(k) ?? []), p]);
+      for (const e of net.edges) {
+        const key = pairKey(e.source, e.target);
+        const adj = new Map<string, string[]>();
+        for (const p of byKey.get(key) ?? []) {
+          adj.set(p.source, [...(adj.get(p.source) ?? []), p.target]);
+          adj.set(p.target, [...(adj.get(p.target) ?? []), p.source]);
+        }
+        const seen = new Set([e.source]);
+        const queue = [e.source];
+        while (queue.length) for (const v of adj.get(queue.shift()!) ?? []) if (!seen.has(v)) seen.add(v), queue.push(v);
+        expect(seen.has(e.target)).toBe(true);
+        expect((byKey.get(key) ?? []).filter((p) => p.edges.length === 1 && p.label)).toHaveLength(1);
+      }
+      const seenPiece = new Set<string>();
+      for (const p of routes.pieces) {
+        const k = [p.source, p.target].sort().join('|');
+        expect(seenPiece.has(k)).toBe(false);
+        seenPiece.add(k);
+      }
+      expect(routeOrg(net, pos, layout.combs ?? new Map())).toEqual(routes);
+    });
+  }
+
+  it("hangs a target's own contacts left and right of its spine, on level stubs, labels facing out", () => {
+    const net = synthetic(2, 9);
+    const layout = organizationLayout(net);
+    const routes = routeOrg(net, layout.pos, layout.combs!);
+    for (const t of ['T0', 'T1']) {
+      const T = layout.pos.get(t)!;
+      const mine = net.nodes.filter((n) => n.id.startsWith(`${t}C`));
+      for (const n of mine) {
+        const p = layout.pos.get(n.id)!;
+        expect(p.y).toBeGreaterThan(T.y);
+        expect(layout.labelSide?.get(n.id)).toBe(p.x < T.x ? 'left' : 'right');
+        const stub = routes.pieces.find((q) => q.target === n.id)!;
+        expect(where(routes, layout.pos, stub.source).y).toBeCloseTo(p.y, 5);
+        expect(where(routes, layout.pos, stub.source).x).toBeCloseTo(T.x, 5);
+      }
+      // The strongest at the top, two to a row.
+      const ys = mine.map((n) => layout.pos.get(n.id)!.y);
+      expect(new Set(ys).size).toBe(Math.ceil(mine.length / 2));
+    }
+  });
+
+  it('splits a long list over several spines joined by a bar', () => {
+    const net = synthetic(1, 120);
+    const layout = organizationLayout(net);
+    const comb = layout.combs!.get('T0')!;
+    expect(comb.spines.length).toBeGreaterThan(1);
+    const routes = routeOrg(net, layout.pos, layout.combs!);
+    const bar = routes.pieces.filter((p) => p.kind === 'bus' && Math.abs(where(routes, layout.pos, p.source).y - where(routes, layout.pos, p.target).y) < 0.2);
+    expect(bar.length).toBeGreaterThan(0);
   });
 });

@@ -205,7 +205,7 @@ describe('packed, hierarchy and organization layouts', () => {
     for (const n of n9.nodes) if (/^T\dC/.test(n.id)) expect(nearestTarget(n9, l, n.id, true)).toBe(n.id.slice(0, 2));
   });
 
-  it('organization: shared contacts above the targets, own contacts hanging below their target in branches at most five wide', () => {
+  it('organization: shared contacts above the targets, own contacts listed down a spine under their target', () => {
     const n9 = synthetic(9, 12, 2);
     const l = organizationLayout(n9);
     const ty = l.pos.get('T0')!.y;

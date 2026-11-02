@@ -214,3 +214,98 @@ export function routeTree(net: Network, pos: Map<string, Point>): Routes {
 
   return { bends, pieces };
 }
+
+/** A target's org-chart branch: spines hanging below it, relative to the target. */
+export interface Comb {
+  /** x of each spine, from the target. */
+  spines: number[];
+  /** y of the bar joining several spines, from the target. */
+  bus: number;
+}
+
+/**
+ * Organization chart: a target's own contacts below it hang off its spines
+ * on short level stubs (the stub carries the link's count and arrows);
+ * shared contacts and links between targets go as in a hierarchy.
+ */
+export function routeOrg(net: Network, pos: Map<string, Point>, combs: Map<string, Comb>): Routes {
+  const targets = new Set(net.nodes.filter((n) => n.isTarget).map((n) => n.id));
+  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
+
+  // A contact of one target only, below it, hangs on that target's spines.
+  const toTargets = new Map<string, NetEdge[]>();
+  for (const e of net.edges) {
+    const st = targets.has(e.source);
+    if (st === targets.has(e.target)) continue;
+    const x = st ? e.target : e.source;
+    if (!toTargets.has(x)) toTargets.set(x, []);
+    toTargets.get(x)!.push(e);
+  }
+  interface Hang {
+    x: string;
+    key: string;
+    tToX: boolean;
+    xToT: boolean;
+    spine: number;
+  }
+  const hangs = new Map<string, Hang[]>();
+  const combEdges = new Set<NetEdge>();
+  for (const [x, es] of toTargets) {
+    if (es.length !== 1) continue;
+    const e = es[0];
+    const st = targets.has(e.source);
+    const t = st ? e.source : e.target;
+    const comb = combs.get(t);
+    if (!comb?.spines.length || at(x).y <= at(t).y) continue;
+    combEdges.add(e);
+    const xs = comb.spines.map((dx) => at(t).x + dx);
+    let spine = 0;
+    xs.forEach((sx, i) => Math.abs(sx - at(x).x) < Math.abs(xs[spine] - at(x).x) && (spine = i));
+    if (!hangs.has(t)) hangs.set(t, []);
+    hangs.get(t)!.push({ x, key: pairKey(e.source, e.target), tToX: st ? e.ab > 0 : e.ba > 0, xToT: st ? e.ba > 0 : e.ab > 0, spine });
+  }
+
+  const { bends, pieces } = routeTree({ ...net, edges: net.edges.filter((e) => !combEdges.has(e)) }, pos);
+  const bend = (owner: string, x: number, y: number) => {
+    const id = `__comb:${owner}:${r1(x)}:${r1(y)}`;
+    if (!bends.has(id)) bends.set(id, { x, y });
+    return id;
+  };
+
+  for (const [t, hs] of hangs) {
+    const T = at(t);
+    const comb = combs.get(t)!;
+    const xs = comb.spines.map((dx) => T.x + dx);
+    const busY = T.y + comb.bus;
+    const used = [...new Set(hs.map((h) => h.spine))].sort((a, b) => a - b);
+    // Several spines (or one off to the side): down from the target to a bar, along it to each.
+    const tops = new Map<number, string>();
+    if (xs.length === 1 && Math.abs(xs[0] - T.x) < EPS) tops.set(0, t);
+    else {
+      const top = bend(t, T.x, busY);
+      pieces.push({ source: t, target: top, edges: hs.map((h) => h.key), kind: 'bus', owner: t });
+      const stops = [...new Set([T.x, ...used.map((i) => xs[i])].map(r1))].sort((a, b) => a - b);
+      for (let i = 0; i + 1 < stops.length; i++) {
+        const [a, b] = [stops[i], stops[i + 1]];
+        if (b - a < EPS) continue;
+        const left = b <= r1(T.x) + EPS;
+        const edges = hs.filter((h) => (left ? r1(xs[h.spine]) <= a + EPS : r1(xs[h.spine]) >= b - EPS)).map((h) => h.key);
+        pieces.push({ source: bend(t, a, busY), target: bend(t, b, busY), edges, kind: 'bus', owner: t });
+      }
+      for (const i of used) tops.set(i, bend(t, xs[i], busY));
+    }
+    // Down each spine in pieces between the stubs, then a stub to each contact.
+    for (const i of used) {
+      const mine = hs.filter((h) => h.spine === i);
+      const ys = [...new Set(mine.map((h) => r1(at(h.x).y)))].sort((a, b) => a - b);
+      let from = tops.get(i)!;
+      for (const y of ys) {
+        const to = bend(t, xs[i], y);
+        pieces.push({ source: from, target: to, edges: mine.filter((h) => r1(at(h.x).y) >= y - EPS).map((h) => h.key), kind: 'bus', owner: t });
+        from = to;
+      }
+      for (const h of mine) pieces.push({ source: bend(t, xs[i], r1(at(h.x).y)), target: h.x, edges: [h.key], kind: 'edge', owner: t, label: true, arrows: [h.xToT, h.tToX] });
+    }
+  }
+  return { bends, pieces };
+}

@@ -1,4 +1,4 @@
-import { LANE_STEP, routeTree } from './linkRoute';
+import { LANE_STEP, routeOrg, routeTree, type Comb } from './linkRoute';
 import type { Network } from './network';
 
 /**
@@ -19,8 +19,10 @@ export interface LinkLayout {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   /** Where a node's label goes when not under it (a target's, away from its fan). */
   labelSide?: Map<string, 'top' | 'bottom' | 'left' | 'right'>;
-  /** Numbers whose label sits a line lower, so neighbours in a tight row do not collide. */
+  /** Numbers whose label sits a line further out, so neighbours in a tight row do not collide. */
   labelLower?: Set<string>;
+  /** Organization chart: each target's spines, for drawing its right-angled links. */
+  combs?: Map<string, Comb>;
 }
 
 /** The ways a link chart can be laid out (force is computed by the chart itself). */
@@ -739,34 +741,70 @@ function targetRow(order: string[], widths: number[]): Map<string, number> {
   return xs;
 }
 
-/**
- * Shared contacts in rows: each wants the middle of the targets it links;
- * rows are filled in that order and pushed apart, then re-centred.
- * Returns how many rows were used.
- */
-function sharedRows(g: Groups, tx: Map<string, number>, y0: number, step: number, rowWidth: number, pos: Map<string, Point>): number {
-  const want: { id: string; x: number }[] = [];
-  for (const [key, ids] of g.shared) {
-    const ts = key.split('\u0000').filter((t) => tx.has(t));
-    const x = ts.reduce((s, t) => s + tx.get(t)!, 0) / Math.max(1, ts.length);
-    for (const id of ids) want.push({ id, x });
-  }
-  want.sort((a, b) => a.x - b.x || g.total(b.id) - g.total(a.id) || a.id.localeCompare(b.id));
-  const perRow = Math.max(1, Math.floor(rowWidth / COL_W));
-  const rows = Math.ceil(want.length / perRow);
-  for (let r = 0; r < rows; r++) {
-    const row = want.slice(r * perRow, (r + 1) * perRow);
-    const xs: number[] = [];
-    row.forEach((w, i) => xs.push(i ? Math.max(w.x, xs[i - 1] + COL_W) : w.x));
-    const shift = row.reduce((s, w, i) => s + (w.x - xs[i]), 0) / Math.max(1, row.length);
-    row.forEach((w, i) => pos.set(w.id, { x: xs[i] + shift, y: y0 + r * step }));
-  }
-  return rows;
-}
-
 /** Contacts linked to no target: one last row, centred. */
 function looseRow(ids: string[], y: number, pos: Map<string, Point>) {
   ids.forEach((id, i) => pos.set(id, { x: (i - (ids.length - 1) / 2) * COL_W, y }));
+}
+
+/**
+ * Shared contacts in a band of rows next to the targets' row (below for
+ * dir 1, above for dir -1), each under or over the middle of its targets,
+ * kept clear of every target's trunk. `gap(r, buses)` is the distance to row
+ * r from the row before it, given how many targets' buses reach row r.
+ * Returns the last row's y (0 for none).
+ */
+function bandRows(g: Groups, tx: Map<string, number>, width: number, dir: 1 | -1, gap: (r: number, buses: number) => number, pos: Map<string, Point>): number {
+  const trunks = [...tx.values()];
+  const want: { id: string; x: number; ts: string[] }[] = [];
+  for (const [key, ids] of g.shared) {
+    const ts = key.split('\u0000').filter((t) => tx.has(t));
+    const x = ts.reduce((s, t) => s + tx.get(t)!, 0) / Math.max(1, ts.length);
+    for (const id of ids) want.push({ id, x, ts });
+  }
+  want.sort((a, b) => a.x - b.x || g.total(b.id) - g.total(a.id) || a.id.localeCompare(b.id));
+  const perRow = Math.max(1, Math.floor(width / COL_W));
+  let y = 0;
+  for (let r = 0; r * perRow < want.length; r++) {
+    const row = want.slice(r * perRow, (r + 1) * perRow);
+    y += dir * gap(r, new Set(row.flatMap((w) => w.ts)).size);
+    const xs: number[] = [];
+    row.forEach((w, i) => xs.push(i ? Math.max(w.x, xs[i - 1] + COL_W) : w.x));
+    const shift = row.reduce((s, w, i) => s + (w.x - xs[i]), 0) / Math.max(1, row.length);
+    let prev = -Infinity;
+    row.forEach((w, i) => {
+      let x = Math.max(xs[i] + shift, prev + COL_W);
+      for (let guard = 0; guard < trunks.length; guard++) {
+        const hit = trunks.find((t) => Math.abs(x - t) < COL_W / 2 - 1e-6);
+        if (hit === undefined) break;
+        x = hit + COL_W / 2;
+      }
+      pos.set(w.id, { x, y });
+      prev = x;
+    });
+  }
+  return y;
+}
+
+/**
+ * Along a tight row, every other label a line further out: neighbours a
+ * column apart are closer than a number is wide.
+ */
+function staggerRows(pos: Map<string, Point>, ids: string[]): Set<string> {
+  const out = new Set<string>();
+  const rows = new Map<number, string[]>();
+  for (const id of ids) {
+    const k = Math.round(pos.get(id)!.y);
+    if (!rows.has(k)) rows.set(k, []);
+    rows.get(k)!.push(id);
+  }
+  for (const row of rows.values()) {
+    row.sort((a, b) => pos.get(a)!.x - pos.get(b)!.x || a.localeCompare(b));
+    row.forEach((id, i) => {
+      const prev = row[i - 1];
+      if (prev && !out.has(prev) && pos.get(id)!.x - pos.get(prev)!.x < 1.6 * COL_W) out.add(id);
+    });
+  }
+  return out;
 }
 
 /** Rows of a hierarchy: icon, a two-line label (every other one a line lower) and the bus of the row below. */
@@ -809,35 +847,7 @@ export function hierarchyLayout(net: Network): LinkLayout {
 
   // Shared contacts: rows in the band, clear of every trunk, each row low
   // enough for one bus per target that comes to it.
-  const trunks = [...tx.values()];
-  const want: { id: string; x: number; ts: string[] }[] = [];
-  for (const [key, ids] of g.shared) {
-    const ts = key.split('\u0000').filter((t) => tx.has(t));
-    const x = ts.reduce((s, t) => s + tx.get(t)!, 0) / Math.max(1, ts.length);
-    for (const id of ids) want.push({ id, x, ts });
-  }
-  want.sort((a, b) => a.x - b.x || g.total(b.id) - g.total(a.id) || a.id.localeCompare(b.id));
-  const perRow = Math.max(1, Math.floor(width / COL_W));
-  let y = 0;
-  for (let r = 0; r * perRow < want.length; r++) {
-    const row = want.slice(r * perRow, (r + 1) * perRow);
-    const buses = new Set(row.flatMap((w) => w.ts)).size;
-    y += (r === 0 ? TREE_TOP : TREE_ROW) + Math.max(0, buses - 1) * LANE_STEP;
-    const xs: number[] = [];
-    row.forEach((w, i) => xs.push(i ? Math.max(w.x, xs[i - 1] + COL_W) : w.x));
-    const shift = row.reduce((s, w, i) => s + (w.x - xs[i]), 0) / Math.max(1, row.length);
-    let prev = -Infinity;
-    row.forEach((w, i) => {
-      let x = Math.max(xs[i] + shift, prev + COL_W);
-      for (let guard = 0; guard < trunks.length; guard++) {
-        const hit = trunks.find((t) => Math.abs(x - t) < COL_W / 2 - 1e-6);
-        if (hit === undefined) break;
-        x = hit + COL_W / 2;
-      }
-      pos.set(w.id, { x, y });
-      prev = x;
-    });
-  }
+  const y = bandRows(g, tx, width, 1, (r, buses) => (r === 0 ? TREE_TOP : TREE_ROW) + Math.max(0, buses - 1) * LANE_STEP, pos);
 
   // Own contacts: rows centred under the target, strongest in the middle.
   const blockTop = y + (y ? TREE_ROW : TREE_TOP);
@@ -856,23 +866,7 @@ export function hierarchyLayout(net: Network): LinkLayout {
   if (g.loose.length) looseRow(g.loose, bottom + TREE_ROW, pos);
   separate(pos, g.targetIds);
 
-  // Along a tight row, every other label a line lower: neighbours a column
-  // apart are closer than a number is wide.
-  const labelLower = new Set<string>();
-  const rows = new Map<number, string[]>();
-  for (const [id, p] of pos) {
-    if (g.targetIds.has(id)) continue;
-    const k = Math.round(p.y);
-    if (!rows.has(k)) rows.set(k, []);
-    rows.get(k)!.push(id);
-  }
-  for (const ids of rows.values()) {
-    ids.sort((a, b) => pos.get(a)!.x - pos.get(b)!.x || a.localeCompare(b));
-    ids.forEach((id, i) => {
-      const prev = ids[i - 1];
-      if (prev && !labelLower.has(prev) && pos.get(id)!.x - pos.get(prev)!.x < 1.6 * COL_W) labelLower.add(id);
-    });
-  }
+  const labelLower = staggerRows(pos, [...pos.keys()].filter((id) => !g.targetIds.has(id)));
 
   // The frame takes in the lanes above the targets too.
   const routes = routeTree(net, pos);
@@ -880,41 +874,92 @@ export function hierarchyLayout(net: Network): LinkLayout {
   return { pos, bounds, labelSide, labelLower };
 }
 
+/** Organization chart geometry (chart units). */
+const ORG_STUB = 72;
+const ORG_ROW = 66;
+const ORG_FIRST = 84;
+const ORG_BUS = 52;
+/** Room for one spine: a contact and its label either side of it. */
+const SPINE_W = 380;
+/** Above the targets to the first row of shared contacts, then between rows. */
+const ORG_TOP = 150;
+const ORG_BAND = 124;
+/** Room beside the chart for the labels of its outer columns. */
+const ORG_LABEL_ROOM = 90;
+
 /**
- * Organization: an org chart. The contacts shared between targets sit in a
- * row above them (over the middle of the targets they link); each target's
- * own contacts hang below it in a narrow branch, at most five across,
- * strongest first, alternate rows offset so links pass between the contacts
- * above rather than through them.
+ * Organization: an org chart. Under each target a spine (several side by
+ * side for a long list, joined by a bar) with its own contacts listed down
+ * it, left and right, strongest at the top, each on a short level stub
+ * carrying the link's count; labels face outwards. Contacts shared between
+ * targets sit in rows above them, over the middle of their targets. Links
+ * are right-angled throughout (see linkRoute).
  */
 export function organizationLayout(net: Network): LinkLayout {
   const g = classify(net);
   const pos = new Map<string, Point>();
+  const labelSide: NonNullable<LinkLayout['labelSide']> = new Map();
+  const combs = new Map<string, Comb>();
+  const k = g.order.length;
   const counts = g.order.map((t) => g.exclusive.get(t)?.length ?? 0);
-  const cols = counts.map((n) => Math.max(1, Math.min(5, n)));
+  const ttCount = net.edges.filter((e) => g.targetIds.has(e.source) && g.targetIds.has(e.target)).length;
+  const sharedCount = [...g.shared.values()].reduce((s, ids) => s + ids.length, 0);
+
+  // How long a spine may get: whatever brings the chart nearest 16:9 (on a
+  // tie, fewer spines).
+  const spinesFor = (rows: number) => counts.map((n) => Math.max(1, Math.ceil(n / (2 * rows))));
+  let rowsCap = 40;
+  let best = Infinity;
+  for (let rows = 40; rows >= 3; rows--) {
+    const sp = spinesFor(rows);
+    const deepest = Math.max(1, ...counts.map((n, i) => Math.ceil(n / (2 * sp[i]))));
+    const w = sp.reduce((a, b) => a + b, 0) * SPINE_W + Math.max(0, k - 1) * COL_W * 0.6;
+    const h = ORG_FIRST + deepest * ORG_ROW + (sharedCount ? ORG_TOP + Math.ceil(sharedCount / Math.max(1, w / COL_W)) * ORG_BAND : 0);
+    const score = Math.abs(Math.log(w / h / (16 / 9)));
+    if (score < best - 1e-9) [rowsCap, best] = [rows, score];
+  }
+  const spines = spinesFor(rowsCap);
   const tx = targetRow(
     g.order,
-    cols.map((c) => (c + 0.5) * COL_W),
+    spines.map((n) => n * SPINE_W),
   );
-  for (const [t, x] of tx) pos.set(t, { x, y: 0 });
+  for (const [t, x] of tx) {
+    pos.set(t, { x, y: 0 });
+    // Below runs the spine and above the links to the shared row: the name goes beside.
+    labelSide.set(t, 'right');
+  }
   const width = Math.max(COL_W, ...[...tx.values()].map((x) => Math.abs(x) * 2 + 2 * TARGET_GAP));
-  // Shared contacts above, rows going up.
-  sharedRows(g, tx, -ROW_H * 1.35, -ROW_H, width, pos);
+
+  // Shared contacts above, rows going up, each row high enough for the
+  // lanes below it (and, for the first, the links between targets).
+  bandRows(g, tx, width, -1, (r, buses) => (r === 0 ? ORG_TOP + (Math.max(0, buses - 1) + ttCount) * LANE_STEP : ORG_BAND + Math.max(0, buses - 1) * LANE_STEP), pos);
+  for (const ids of g.shared.values()) for (const id of ids) labelSide.set(id, 'top');
+
+  // Own contacts down the spines: across each row spine by spine, left then right.
   let bottom = 0;
-  g.order.forEach((t, k) => {
-    const ids = g.exclusive.get(t) ?? [];
-    const c = cols[k];
-    ids.forEach((id, i) => {
-      const row = Math.floor(i / c);
-      const inRow = Math.min(c, ids.length - row * c);
-      const shift = row % 2 === 1 ? 0.5 : 0;
-      const x = tx.get(t)! + (i % c - (inRow - 1) / 2 + (inRow === c ? shift - 0.25 : 0)) * COL_W;
-      const y = ROW_H * 1.3 + row * ROW_H;
-      pos.set(id, { x, y });
+  g.order.forEach((t, i) => {
+    const s = spines[i];
+    const dx = Array.from({ length: s }, (_, j) => (j - (s - 1) / 2) * SPINE_W);
+    combs.set(t, { spines: dx, bus: ORG_BUS });
+    const first = s > 1 ? ORG_FIRST + 24 : ORG_FIRST;
+    const T = pos.get(t)!;
+    (g.exclusive.get(t) ?? []).forEach((id, n) => {
+      const row = Math.floor(n / (2 * s));
+      const p = n % (2 * s);
+      const right = p % 2 === 1;
+      const y = T.y + first + row * ORG_ROW;
+      pos.set(id, { x: T.x + dx[Math.floor(p / 2)] + (right ? ORG_STUB : -ORG_STUB), y });
+      labelSide.set(id, right ? 'right' : 'left');
       bottom = Math.max(bottom, y);
     });
   });
   if (g.loose.length) looseRow(g.loose, bottom + ROW_H * 1.5, pos);
   separate(pos, g.targetIds);
-  return { pos, bounds: boundsOf(pos) };
+
+  // The frame takes in the lines and the labels beside the outer columns.
+  const routes = routeOrg(net, pos, combs);
+  const b = boundsOf(new Map([...pos, ...routes.bends]));
+  // Shared contacts' labels sit above them; in a tight row, every other one a line higher.
+  const labelLower = staggerRows(pos, [...g.shared.values()].flat());
+  return { pos, bounds: { minX: b.minX - ORG_LABEL_ROOM, minY: b.minY - 40, maxX: b.maxX + ORG_LABEL_ROOM, maxY: b.maxY + 20 }, labelSide, labelLower, combs };
 }

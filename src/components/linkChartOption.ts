@@ -1,7 +1,7 @@
 import type { EChartsCoreOption } from 'echarts/core';
 import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout, type Point } from '../lib/analysis/linkLayout';
 import { boxOf, chartFrame, unionBox, type Box } from '../lib/analysis/linkMove';
-import { routeTree } from '../lib/analysis/linkRoute';
+import { routeOrg, routeTree } from '../lib/analysis/linkRoute';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -252,7 +252,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
   });
 
   // How each link looks, whether drawn straight or in right-angled pieces.
-  const routed = input.layoutMode === 'hierarchy';
+  const routed = input.layoutMode === 'hierarchy' || input.layoutMode === 'organization';
   const styleOf = (e: NetEdge) => {
     const key = edgeKey(e.source, e.target);
     const tt = targetIds.has(e.source) && targetIds.has(e.target);
@@ -316,7 +316,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     // Right-angled links: invisible corner points, and each link in straight
     // pieces between them (worked out again whenever numbers are moved).
     const at = new Map(net.nodes.map((n) => [n.id, (fixed && input.moved?.get(n.id)) || layout.pos.get(n.id) || { x: 0, y: 0 }]));
-    const routes = routeTree(net, at);
+    const routes = input.layoutMode === 'organization' ? routeOrg(net, at, layout.combs ?? new Map()) : routeTree(net, at);
     const clamp = (v: number, lo = -Infinity, hi = Infinity) => Math.max(lo, Math.min(hi, v));
     bends = [...routes.bends].map(([id, p]) => hidden(id, clamp(p.x, frame?.minX, frame?.maxX), clamp(p.y, frame?.minY, frame?.maxY)));
     const byKey = new Map(net.edges.map((e) => [edgeKey(e.source, e.target), e]));
@@ -339,10 +339,14 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       const e = byKey.get(p.edges[0])!;
       const st = styleOf(e);
       // On the short drop into a number the count stands upright just above
-      // it (a label in the middle would turn with the line).
+      // it (a label in the middle would turn with the line); a level stub
+      // keeps it in the middle.
       const drop = routes.bends.has(p.source) && !routes.bends.has(p.target);
+      const from = routes.bends.get(p.source);
+      const to = at.get(p.target);
+      const upright = drop && !!from && !!to && Math.abs(to.y - from.y) > Math.abs(to.x - from.x);
       const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7);
-      const label = { ...linkLabel(e, !!p.label && st.showLabel, st.colour), ...(drop ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {}) };
+      const label = { ...linkLabel(e, !!p.label && st.showLabel, st.colour), ...(upright ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {}) };
       return {
         source: p.source,
         target: p.target,
