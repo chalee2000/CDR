@@ -1,5 +1,5 @@
 import type { EChartsCoreOption } from 'echarts/core';
-import { pairKey, type LayoutKind, type LinkLayout } from '../lib/analysis/linkLayout';
+import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout } from '../lib/analysis/linkLayout';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -131,6 +131,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
   const fit = input.view ? Math.min((input.view.w - 2 * padX) / Math.max(1, b.maxX - b.minX), (input.view.h - 2 * padY - 8) / Math.max(1, b.maxY - b.minY)) : 1;
   const nodeScale = Math.max(0.42, Math.min(1, fit * 1.3));
   const dense = nodeScale < 0.75;
+  // No contact icon may outgrow the room the layout gives it on screen, not
+  // even a named person's, or neighbours pile on top of each other.
+  const room = Math.max(14, MIN_GAP * fit * 1.25);
 
   // Labels shown without hovering: targets, shared, named, strongest per target.
   const topContacts = new Set<string>();
@@ -138,7 +141,8 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     net.edges
       .filter((e) => (e.source === id && !targetIds.has(e.target)) || (e.target === id && !targetIds.has(e.source)))
       .sort((a, b) => b.weight - a.weight)
-      .slice(0, dense ? 3 : TOP_LABELS_PER_TARGET)
+      // A dense chart keeps fan labels for hovering: they would only collide.
+      .slice(0, dense ? 0 : TOP_LABELS_PER_TARGET)
       .forEach((e) => topContacts.add(e.source === id ? e.target : e.source));
   }
   const strongEdges = new Set(
@@ -172,7 +176,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     const base = 30 + 16 * Math.sqrt(n.weightedDegree / maxW);
     // Shared and identified people stay easy to spot even when shrunk.
     const keyNode = n.shared || !!personName(p) || !!p?.photo;
-    return Math.round(Math.max(base * nodeScale, keyNode ? 40 * Math.max(nodeScale, 0.7) : 0, p?.photo ? 44 * Math.max(nodeScale, 0.75) : 0, 14));
+    return Math.round(Math.min(room, Math.max(base * nodeScale, keyNode ? 40 * Math.max(nodeScale, 0.7) : 0, p?.photo ? 44 * Math.max(nodeScale, 0.75) : 0, 14)));
   };
 
   const data = net.nodes.map((n) => {
@@ -197,7 +201,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       },
       label: {
         show,
-        position: 'bottom',
+        position: layout.labelSide?.get(n.id) ?? 'bottom',
         distance: 4,
         formatter: name ? `{n|${labelText(name)}}\n{d|${labelText(n.id, 24)}}` : `{d|${labelText(n.id, 24)}}`,
         rich: {
@@ -219,10 +223,15 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     const colour = tt ? ch.ink2 : input.colorBy === 'community' ? ch.other : slotColor(byId.get(owner)?.slot ?? 99, mode);
     const focused = focusEdges?.has(key);
     const dim = focusEdges && !focused;
-    const width = 1.2 + 4.8 * (Math.log1p(e.weight) / Math.log1p(maxE)) + (tt ? 1.5 : 0) + (focused ? 1 : 0);
+    // Links between targets matter but should not dominate the picture.
+    const width = 1.2 + 4.8 * (Math.log1p(e.weight) / Math.log1p(maxE)) + (tt ? 0.6 : 0) + (focused ? 1 : 0);
     const ends = [byId.get(e.source), byId.get(e.target)];
-    const important = tt || ends.some((n) => n && !n.isTarget && (n.shared || profiles[n.id]));
-    const showLabel = !dim && (input.allEdgeLabels || net.edges.length <= AUTO_ALL || important || strongEdges.has(key) || !!focused);
+    const keyEnd = ends.some((n) => n && !n.isTarget && (n.shared || profiles[n.id]));
+    const important = tt || (!dense && keyEnd);
+    // A dense chart labels only links that lead somewhere worth reading:
+    // fan links' counts would sit on top of the fan's contacts.
+    const strong = strongEdges.has(key) && (!dense || keyEnd);
+    const showLabel = !dim && (input.allEdgeLabels || net.edges.length <= AUTO_ALL || important || strong || !!focused);
     return {
       source: e.source,
       target: e.target,
@@ -231,7 +240,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       symbolSize: Math.min(11, 6 + width) * Math.max(nodeScale, 0.7),
       // Links between two targets bow out so they never run through the
       // shared contacts placed on the straight line between them.
-      lineStyle: { color: colour, width, opacity: dim ? 0.06 : focused ? 0.95 : tt ? 0.9 : t.link, curveness: tt ? 0.22 : 0 },
+      lineStyle: { color: colour, width, opacity: dim ? 0.06 : focused ? 0.95 : tt ? 0.75 : t.link, curveness: tt ? 0.22 : 0 },
       label: {
         show: showLabel,
         formatter: fmtInt(e.weight),

@@ -16,6 +16,8 @@ export interface Point {
 export interface LinkLayout {
   pos: Map<string, Point>;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  /** Where a node's label goes when not under it (a target's, away from its fan). */
+  labelSide?: Map<string, 'top' | 'bottom' | 'left' | 'right'>;
 }
 
 /** The ways a link chart can be laid out (force is computed by the chart itself). */
@@ -125,6 +127,8 @@ export function hubLayout(net: Network): LinkLayout {
   // Target hubs.
   const hub = new Map<string, Point>();
   const outward = new Map<string, number>();
+  // Size of the targets' ellipse when there are many targets (see below).
+  let innerB = 0;
   if (k === 1) {
     hub.set(order[0], { x: 0, y: 0 });
     outward.set(order[0], -Math.PI / 2);
@@ -136,7 +140,7 @@ export function hubLayout(net: Network): LinkLayout {
     hub.set(order[1], { x: d / 2, y: 0 });
     outward.set(order[0], Math.PI);
     outward.set(order[1], 0);
-  } else if (k > 2) {
+  } else if (k === 3) {
     const maxR = Math.max(RING0, ...order.map(clusterR));
     const rc = Math.max(320, (1.1 * maxR) / Math.sin(Math.PI / k));
     order.forEach((id, i) => {
@@ -144,8 +148,39 @@ export function hubLayout(net: Network): LinkLayout {
       hub.set(id, { x: rc * Math.cos(a), y: rc * Math.sin(a) });
       outward.set(id, a);
     });
+  } else if (k > 3) {
+    // Many targets: an ellipse as wide as the chart box is, the targets
+    // evenly spaced along it and just far enough apart that neighbouring
+    // fans do not meet; the shared contacts get ordered rings inside.
+    const maxR = Math.max(RING0, ...order.map(clusterR));
+    const unit = ellipseTrack(ELLIPSE, 1);
+    const spots = order.map((_, i) => unit.at((unit.total * i) / k));
+    let nearest = Infinity;
+    spots.forEach((p, i) => (nearest = Math.min(nearest, Math.hypot(p.x - spots[(i + 1) % k].x, p.y - spots[(i + 1) % k].y))));
+    let b = Math.max(300, (2.2 * maxR) / nearest);
+    const sharedCount = [...shared.values()].reduce((n, ids) => n + ids.length, 0);
+    const capacity = (bb: number) => INNER_RINGS.reduce((n, f) => n + Math.floor((unit.total * bb * f) / SHARED_GAP), 0);
+    for (let i = 0; i < 40 && capacity(b) < sharedCount; i++) b *= 1.1;
+    innerB = b;
+    order.forEach((id, i) => {
+      const p = spots[i];
+      hub.set(id, { x: p.x * b, y: p.y * b });
+      // The fan points along the ellipse's outward normal.
+      outward.set(id, Math.atan2(p.y, p.x / (ELLIPSE * ELLIPSE)));
+    });
   }
   for (const [id, p] of hub) pos.set(id, { ...p });
+
+  let labelSide: LinkLayout['labelSide'];
+  if (k > 3) {
+    // A target's label goes on the side away from its fan.
+    labelSide = new Map();
+    for (const [id, phi] of outward) {
+      const dy = Math.sin(phi);
+      const dx = Math.cos(phi);
+      labelSide.set(id, dy > 0.6 ? 'top' : dy < -0.6 ? 'bottom' : dx > 0 ? 'left' : 'right');
+    }
+  }
 
   // Each target's own contacts: rings on its outer side, strongest nearest.
   for (const id of order) {
@@ -168,8 +203,10 @@ export function hubLayout(net: Network): LinkLayout {
     });
   }
 
-  // Shared contacts: between the targets they link, strongest in the middle.
-  for (const [key, ids] of shared) {
+  // Shared contacts: on ordered inner rings when there are many targets,
+  // otherwise between the targets they link, strongest in the middle.
+  if (k > 3) placeSharedRings(shared, links, total, hub, innerB, pos, (labelSide ??= new Map()));
+  else for (const [key, ids] of shared) {
     const ts = key.split('\u0000').filter((t) => hub.has(t));
     const members = byWeight(ids, total);
     const c = ts.reduce((acc, t) => ({ x: acc.x + hub.get(t)!.x / ts.length, y: acc.y + hub.get(t)!.y / ts.length }), { x: 0, y: 0 });
@@ -204,7 +241,117 @@ export function hubLayout(net: Network): LinkLayout {
   });
 
   separate(pos, targetIds);
-  return { pos, bounds: boundsOf(pos) };
+  return { pos, bounds: boundsOf(pos), labelSide };
+}
+
+/** Width over height of the ellipse many targets sit on (the chart box is wide). */
+const ELLIPSE = 1.6;
+/** Inner rings for shared contacts, as fractions of the targets' ellipse, outermost first. */
+const INNER_RINGS = [0.62, 0.47, 0.33, 0.2];
+/** Gap between shared contacts on a ring: room for a photo and a name. */
+const SHARED_GAP = 1.3 * MIN_GAP;
+
+/** An ellipse (half-axes a, b) measured by arc length from its top, clockwise on screen. */
+function ellipseTrack(a: number, b: number, steps = 720) {
+  const pts: Point[] = [];
+  const len: number[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = -Math.PI / 2 + (2 * Math.PI * i) / steps;
+    pts.push({ x: a * Math.cos(t), y: b * Math.sin(t) });
+    len.push(i ? len[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) : 0);
+  }
+  const total = len[steps];
+  /** The point at arc length s (wrapping round). */
+  const at = (s: number): Point => {
+    const v = ((s % total) + total) % total;
+    let lo = 0;
+    let hi = steps;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (len[mid] <= v) lo = mid;
+      else hi = mid;
+    }
+    const f = (v - len[lo]) / Math.max(1e-9, len[hi] - len[lo]);
+    return { x: pts[lo].x + f * (pts[hi].x - pts[lo].x), y: pts[lo].y + f * (pts[hi].y - pts[lo].y) };
+  };
+  /** Arc length of the point seen in direction beta from the centre. */
+  const arcOf = (beta: number): number => {
+    const t = Math.atan2(a * Math.sin(beta), b * Math.cos(beta));
+    const i = ((((t + Math.PI / 2) / (2 * Math.PI)) * steps) % steps + steps) % steps;
+    const lo = Math.floor(i);
+    return len[lo] + (i - lo) * (len[lo + 1] - len[lo]);
+  };
+  return { total, at, arcOf };
+}
+
+/**
+ * Shared contacts of many targets: each faces the (weighted) direction of
+ * its targets and sits on an inner ring there, in order round the ring.
+ * Those whose targets lie close together take the outer ring, nearest
+ * them; those linking targets all round the chart go to the inner rings.
+ */
+function placeSharedRings(
+  shared: Map<string, string[]>,
+  links: Map<string, Map<string, number>>,
+  total: (id: string) => number,
+  hub: Map<string, Point>,
+  b: number,
+  pos: Map<string, Point>,
+  labelSide: NonNullable<LinkLayout['labelSide']>,
+) {
+  const wants: { id: string; beta: number; rho: number }[] = [];
+  for (const ids of shared.values()) {
+    for (const id of ids) {
+      let x = 0;
+      let y = 0;
+      let w = 0;
+      let strongest = '';
+      let best = -1;
+      for (const [t, weight] of links.get(id) ?? []) {
+        const h = hub.get(t);
+        if (!h) continue;
+        const a = Math.atan2(h.y, h.x);
+        x += weight * Math.cos(a);
+        y += weight * Math.sin(a);
+        w += weight;
+        if (weight > best || (weight === best && t < strongest)) [best, strongest] = [weight, t];
+      }
+      const rho = w ? Math.hypot(x, y) / w : 0;
+      const h = hub.get(strongest);
+      const beta = rho > 0.15 || !h ? Math.atan2(y, x) : Math.atan2(h.y, h.x);
+      wants.push({ id, beta, rho });
+    }
+  }
+  wants.sort((p, q) => q.rho - p.rho || total(q.id) - total(p.id) || p.id.localeCompare(q.id));
+  let next = 0;
+  INNER_RINGS.forEach((f, j) => {
+    const track = ellipseTrack(ELLIPSE * b * f, b * f);
+    const cap = j === INNER_RINGS.length - 1 ? wants.length - next : Math.floor(track.total / SHARED_GAP);
+    const ring = wants.slice(next, next + cap);
+    next += ring.length;
+    if (!ring.length) return;
+    const want = ring.map((r) => ({ id: r.id, s: track.arcOf(r.beta) })).sort((p, q) => p.s - q.s || p.id.localeCompare(q.id));
+    const n = want.length;
+    const gap = Math.min(SHARED_GAP, track.total / n);
+    // Open the ring at its widest gap, push neighbours apart, re-centre.
+    let cut = 0;
+    let widest = -1;
+    for (let i = 0; i < n; i++) {
+      const g = (want[(i + 1) % n].s - want[i].s + track.total) % track.total || (n === 1 ? track.total : 0);
+      if (g > widest) [widest, cut] = [g, (i + 1) % n];
+    }
+    const order = [...want.slice(cut), ...want.slice(0, cut)];
+    const desired = order.map((o, i) => (i && o.s < order[0].s ? o.s + track.total : o.s));
+    const placed: number[] = [];
+    desired.forEach((d, i) => placed.push(i ? Math.max(d, placed[i - 1] + gap) : d));
+    if (placed[n - 1] - placed[0] + gap > track.total) placed.forEach((_, i) => (placed[i] = placed[0] + (i * track.total) / n));
+    const shift = desired.reduce((acc, d, i) => acc + (d - placed[i]), 0) / n;
+    order.forEach((o, i) => {
+      pos.set(o.id, track.at(placed[i] + shift));
+      // Neighbours on a ring take turns above and below, so their labels have twice the room.
+      labelSide.set(o.id, i % 2 ? 'top' : 'bottom');
+    });
+  });
 }
 
 /** Greedy chain: start from the first target, keep the strongest partner next. */

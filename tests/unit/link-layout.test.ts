@@ -129,6 +129,46 @@ function nearestTarget(net: Network, l: LinkLayout, id: string, xOnly = false) {
   return best;
 }
 
+describe('hub layout with many targets', () => {
+  for (const [k, per, sharedPer] of [
+    [4, 20, 3],
+    [10, 40, 3],
+  ] as const) {
+    it(`${k} targets: an ellipse as wide as a chart box, shared contacts on rings inside, nothing touching`, () => {
+      const n = synthetic(k, per, sharedPer);
+      const l = hubLayout(n);
+      expect(l.pos.size).toBe(n.nodes.length);
+      expect(hubLayout(n).pos).toEqual(l.pos);
+      const d = minDistances(n, l);
+      expect(d.contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+      expect(d.toTarget).toBeGreaterThanOrEqual(0.9 * TARGET_GAP);
+      const hubs = n.nodes.filter((x) => x.isTarget).map((x) => l.pos.get(x.id)!);
+      const a = Math.max(...hubs.map((p) => Math.abs(p.x)));
+      const b = Math.max(...hubs.map((p) => Math.abs(p.y)));
+      expect(a / b).toBeGreaterThan(1.3);
+      for (const x of n.nodes) {
+        if (!x.id.startsWith('S')) continue;
+        const p = l.pos.get(x.id)!;
+        expect((p.x / a) ** 2 + (p.y / b) ** 2).toBeLessThan(0.75);
+      }
+      const w = l.bounds.maxX - l.bounds.minX;
+      const h = l.bounds.maxY - l.bounds.minY;
+      expect(w / h).toBeGreaterThan(1.15);
+      // Each target's label is set, away from its fan: the lowest target's label goes on top.
+      for (const x of n.nodes) if (x.isTarget) expect(l.labelSide?.has(x.id)).toBe(true);
+      // Shared contacts on a ring take turns: labels above and below.
+      const sides = new Set(n.nodes.filter((x) => x.id.startsWith('S')).map((x) => l.labelSide?.get(x.id)));
+      expect(sides).toEqual(new Set(['top', 'bottom']));
+      const lowest = n.nodes.filter((x) => x.isTarget).sort((p, q) => l.pos.get(q.id)!.y - l.pos.get(p.id)!.y)[0];
+      expect(l.labelSide!.get(lowest.id)).toBe('top');
+    });
+  }
+
+  it('leaves one to three targets as they were (no label sides)', () => {
+    expect(hubLayout(synthetic(3, 10, 2)).labelSide).toBeUndefined();
+  });
+});
+
 describe('packed, hierarchy and organization layouts', () => {
   const net = buildNetwork(datasets, DEFAULT_SETTINGS, DEFAULT_NETWORK_OPTIONS);
   const layouts = { packed: packedLayout, hierarchy: hierarchyLayout, organization: organizationLayout };
