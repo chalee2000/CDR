@@ -17,6 +17,9 @@ export function CrossView() {
   const { datasets, settings, coordImport, profiles, openPeer } = useStore();
   const mode = useEffectiveTheme();
   const [layoutMode, setLayoutMode] = useState<LinkLayoutMode>('hub');
+  // Every label at once is only readable on a small chart; a big one labels
+  // its strongest numbers and links unless asked for all.
+  const [allLabels, setAllLabels] = useState(false);
   const byId = useMemo(() => new Map(datasets.map((d) => [d.id, d])), [datasets]);
   // Targets with the contacts they share and their direct links only.
   const bridges = useMemo(() => buildNetwork(datasets, settings, { ...DEFAULT_NETWORK_OPTIONS, topN: 0, onlyShared: true }), [datasets, settings]);
@@ -118,7 +121,16 @@ export function CrossView() {
       <Section
         title="ผังผู้ติดต่อร่วมและการติดต่อตรงระหว่างเป้าหมาย"
         sub="เฉพาะเลขหมายที่ติดต่อกับเป้าหมายตั้งแต่ 2 รายขึ้นไป · ตัวเลขบนเส้น = จำนวนครั้ง (โทร + SMS) · คลิกเลขหมายเพื่อดูรายละเอียด · ดับเบิลคลิกผังเพื่อดูเต็มจอ"
-        actions={bridges.edges.length > 0 && <LinkLayoutPicker value={layoutMode} onChange={setLayoutMode} />}
+        actions={
+          bridges.edges.length > 0 && (
+            <>
+              <button className="btn small toggle" type="button" aria-pressed={allLabels} onClick={() => setAllLabels((v) => !v)}>
+                ป้ายชื่อทุกเลข
+              </button>
+              <LinkLayoutPicker value={layoutMode} onChange={setLayoutMode} />
+            </>
+          )
+        }
       >
         {bridges.edges.length > 0 ? (
           <>
@@ -133,8 +145,8 @@ export function CrossView() {
                 label={`ผังผู้ติดต่อร่วม ${bridges.nodes.length} เลขหมาย`}
                 height={440}
                 layoutMode={layoutMode}
-                allLabels
-                allEdgeLabels
+                allLabels={allLabels}
+                allEdgeLabels={allLabels}
                 expandable
                 onSelect={(sel) => {
                   if (sel?.type === 'node') openPeer(sel.id);

@@ -23,6 +23,10 @@ export interface LinkLayout {
   labelLower?: Set<string>;
   /** Organization chart: each target's spines, for drawing its right-angled links. */
   combs?: Map<string, Comb>;
+  /** Links between targets are drawn straight (the layout keeps their path clear). */
+  straightTargetLinks?: boolean;
+  /** Curveness of particular links between targets, keyed `source\u0000target` as in the network. */
+  targetCurves?: Map<string, number>;
 }
 
 /** The ways a link chart can be laid out (force is computed by the chart itself). */
@@ -132,6 +136,12 @@ export function hubLayout(net: Network): LinkLayout {
   // Target hubs.
   const hub = new Map<string, Point>();
   const outward = new Map<string, number>();
+  // Many targets: their order round the ellipse, and the contacts shared by
+  // each pair of neighbours (keyed by the first one's place).
+  let around = order;
+  let bridges = new Map<number, string[]>();
+  let reach = (t: string): number => (t ? 0 : 0);
+  let targetCurves: Map<string, number> | undefined;
   // Size of the targets' ellipse when there are many targets (see below).
   let innerB = 0;
   if (k === 1) {
@@ -155,19 +165,37 @@ export function hubLayout(net: Network): LinkLayout {
     });
   } else if (k > 3) {
     // Many targets: an ellipse as wide as the chart box is, the targets
-    // evenly spaced along it and just far enough apart that neighbouring
-    // fans do not meet; the shared contacts get ordered rings inside.
+    // evenly spaced along it (those sharing the most contacts side by side)
+    // and just far enough apart that neighbouring fans do not meet. Contacts
+    // shared by two neighbours bridge the gap between them just inside the
+    // ellipse; the rest get ordered rings further in.
+    around = aroundTheRing(order, shared, net);
     const maxR = Math.max(RING0, ...order.map(clusterR));
     const unit = ellipseTrack(ELLIPSE, 1);
-    const spots = order.map((_, i) => unit.at((unit.total * i) / k));
+    const spots = around.map((_, i) => unit.at((unit.total * i) / k));
     let nearest = Infinity;
     spots.forEach((p, i) => (nearest = Math.min(nearest, Math.hypot(p.x - spots[(i + 1) % k].x, p.y - spots[(i + 1) % k].y))));
     let b = Math.max(300, (2.2 * maxR) / nearest);
-    const sharedCount = [...shared.values()].reduce((n, ids) => n + ids.length, 0);
-    const capacity = (bb: number) => INNER_RINGS.reduce((n, f) => n + Math.floor((unit.total * bb * f) / SHARED_GAP), 0);
-    for (let i = 0; i < 40 && capacity(b) < sharedCount; i++) b *= 1.1;
+    bridges = bridgeGroups(around, shared);
+    // A bridge keeps clear of the fans either side of it.
+    reach = (t: string) => (clusterR(t) ? clusterR(t) + 0.6 * MIN_GAP : 0.8 * TARGET_GAP);
+    // Room on the inner rings for the shared contacts that are not bridges
+    // (the bridges take the outer part of the ellipse).
+    const restCount = [...shared.values()].reduce((n, ids) => n + ids.length, 0) - [...bridges.values()].reduce((n, ids) => n + ids.length, 0);
+    const shrink = bridges.size ? 0.85 : 1;
+    const capacity = (bb: number) => INNER_RINGS.reduce((n, f) => n + Math.floor((unit.total * bb * f * shrink) / SHARED_GAP), 0);
+    // A bridge needs room between its two fans: let the ellipse grow a little for that.
+    const bridgesFit = (bb: number) =>
+      [...bridges].every(([first, ids]) => {
+        const [p, q] = [spots[first], spots[(first + 1) % k]];
+        const len = bb * Math.hypot(q.x - p.x, q.y - p.y);
+        const room = len - reach(around[first]) - reach(around[(first + 1) % k]);
+        return ids.length <= bridgeCapacity(room, bb * Math.hypot((p.x + q.x) / 2, (p.y + q.y) / 2));
+      });
+    const b0 = b;
+    for (let i = 0; i < 40 && (capacity(b) < restCount || (!bridgesFit(b) && b < 1.5 * b0)); i++) b *= 1.1;
     innerB = b;
-    order.forEach((id, i) => {
+    around.forEach((id, i) => {
       const p = spots[i];
       hub.set(id, { x: p.x * b, y: p.y * b });
       // The fan points along the ellipse's outward normal.
@@ -210,7 +238,33 @@ export function hubLayout(net: Network): LinkLayout {
 
   // Shared contacts: on ordered inner rings when there are many targets,
   // otherwise between the targets they link, strongest in the middle.
-  if (k > 3) placeSharedRings(shared, links, total, hub, innerB, pos, (labelSide ??= new Map()));
+  if (k > 3) {
+    const sides = (labelSide ??= new Map());
+    const spill = placeBridges(around, bridges, total, hub, reach, pos, sides);
+    const rest = new Map([...shared].map(([key, ids]) => [key, ids.filter((id) => !pos.has(id) || spill.has(id))] as const).filter(([, ids]) => ids.length));
+    // The other shared contacts on inner rings, a gap further in than the deepest bridge.
+    let top = INNER_RINGS[0];
+    for (const ids of bridges.values()) {
+      for (const id of ids) {
+        const p = pos.get(id);
+        if (p && !spill.has(id)) top = Math.min(top, Math.hypot(p.x / (ELLIPSE * innerB), p.y / innerB) - (1.25 * MIN_GAP) / innerB);
+      }
+    }
+    placeSharedRings(rest, links, total, hub, innerB, pos, sides, INNER_RINGS.map((f) => (f * Math.max(0.3, top)) / INNER_RINGS[0]));
+    // Neighbours' links bow out round the rim, clear of the bridge between
+    // them; links across the chart stay straight.
+    const place = new Map(around.map((t, i) => [t, i]));
+    for (const e of net.edges) {
+      const [i, j] = [place.get(e.source), place.get(e.target)];
+      if (i === undefined || j === undefined) continue;
+      const d = Math.abs(i - j);
+      if (Math.min(d, k - d) !== 1) continue;
+      const [p, q] = [hub.get(e.source)!, hub.get(e.target)!];
+      // ECharts bends a link towards mid + c·(q.y − p.y, p.x − q.x).
+      const out = (q.y - p.y) * (p.x + q.x) + (p.x - q.x) * (p.y + q.y);
+      (targetCurves ??= new Map()).set(`${e.source}\u0000${e.target}`, out > 0 ? 0.25 : -0.25);
+    }
+  }
   else for (const [key, ids] of shared) {
     const ts = key.split('\u0000').filter((t) => hub.has(t));
     const members = byWeight(ids, total);
@@ -246,7 +300,7 @@ export function hubLayout(net: Network): LinkLayout {
   });
 
   separate(pos, targetIds);
-  return { pos, bounds: boundsOf(pos), labelSide };
+  return { pos, bounds: boundsOf(pos), labelSide, ...(k > 3 ? { straightTargetLinks: true, targetCurves } : {}) };
 }
 
 /** Width over height of the ellipse many targets sit on (the chart box is wide). */
@@ -255,6 +309,141 @@ const ELLIPSE = 1.6;
 const INNER_RINGS = [0.62, 0.47, 0.33, 0.2];
 /** Gap between shared contacts on a ring: room for a photo and a name. */
 const SHARED_GAP = 1.3 * MIN_GAP;
+/** A bridge's first row sits this far inside the line between its two targets. */
+const BRIDGE_START = 0.7 * MIN_GAP;
+/** Contacts across a bridge's rows, and how many rows before it is half way to the middle. */
+const bridgeRows = (room: number, toMiddle: number) => ({
+  perRow: room < 0 ? 1 : Math.floor(room / SHARED_GAP) + 1,
+  rows: Math.max(1, Math.floor((0.45 * toMiddle - BRIDGE_START) / SHARED_GAP) + 1),
+});
+const bridgeCapacity = (room: number, toMiddle: number) => {
+  const { perRow, rows } = bridgeRows(room, toMiddle);
+  return perRow * rows;
+};
+
+/**
+ * Many targets round an ellipse: the order that puts as many shared
+ * contacts (and links between targets) as possible between direct
+ * neighbours, the rest as close as they can be. Starts from the greedy chain
+ * and improves it by reversing stretches and swapping pairs until nothing
+ * helps; the first target stays on top.
+ */
+function aroundTheRing(order: string[], shared: Map<string, string[]>, net: Network): string[] {
+  const k = order.length;
+  const idx = new Map(order.map((t, i) => [t, i]));
+  const w = Array.from({ length: k }, () => new Array<number>(k).fill(0));
+  const bump = (a: number | undefined, b: number | undefined, v: number) => {
+    if (a === undefined || b === undefined || a === b) return;
+    w[a][b] += v;
+    w[b][a] += v;
+  };
+  for (const [key, ids] of shared) {
+    const ts = key.split('\u0000').map((t) => idx.get(t));
+    for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) bump(ts[i], ts[j], ids.length);
+  }
+  for (const e of net.edges) bump(idx.get(e.source), idx.get(e.target), 2);
+  const cost = (perm: number[]) => {
+    const at = new Array<number>(k);
+    perm.forEach((t, p) => (at[t] = p));
+    let c = 0;
+    for (let i = 0; i < k; i++) {
+      for (let j = i + 1; j < k; j++) {
+        if (!w[i][j]) continue;
+        // Neighbours cost nothing (their contacts bridge the gap between
+        // them); anything further costs about the same, a little more the
+        // further round it is, so as many as possible become neighbours.
+        const d = Math.min(Math.abs(at[i] - at[j]), k - Math.abs(at[i] - at[j]));
+        if (d > 1) c += w[i][j] * (1 + 0.15 * (d - 1));
+      }
+    }
+    return c;
+  };
+  let perm = order.map((_, i) => i);
+  let best = cost(perm);
+  const tryPerm = (cand: number[]) => {
+    const c = cost(cand);
+    if (c < best - 1e-9) {
+      perm = cand;
+      best = c;
+      return true;
+    }
+    return false;
+  };
+  for (let pass = 0; pass < 50; pass++) {
+    let improved = false;
+    for (let i = 0; i < k - 1; i++) {
+      for (let j = i + 1; j < k; j++) {
+        if (tryPerm([...perm.slice(0, i), ...perm.slice(i, j + 1).reverse(), ...perm.slice(j + 1)])) improved = true;
+        const swapped = [...perm];
+        [swapped[i], swapped[j]] = [swapped[j], swapped[i]];
+        if (tryPerm(swapped)) improved = true;
+      }
+    }
+    if (!improved) break;
+  }
+  const start = perm.indexOf(0);
+  return [...perm.slice(start), ...perm.slice(0, start)].map((i) => order[i]);
+}
+
+/** Contacts shared by exactly two neighbours round the ring, keyed by the first neighbour's place. */
+function bridgeGroups(around: string[], shared: Map<string, string[]>): Map<number, string[]> {
+  const k = around.length;
+  const place = new Map(around.map((t, i) => [t, i]));
+  const out = new Map<number, string[]>();
+  for (const [key, ids] of shared) {
+    const ts = key.split('\u0000');
+    if (ts.length !== 2 || !place.has(ts[0]) || !place.has(ts[1])) continue;
+    const [i, j] = [place.get(ts[0])!, place.get(ts[1])!].sort((a, b) => a - b);
+    const first = j - i === 1 ? i : i === 0 && j === k - 1 ? j : -1;
+    if (first < 0) continue;
+    out.set(first, [...(out.get(first) ?? []), ...ids]);
+  }
+  return out;
+}
+
+/**
+ * Two neighbours' shared contacts as a neat block between them: rows along
+ * the line joining the two targets, just inside it and growing towards the
+ * middle of the chart, strongest in the middle of the first row, clear of
+ * the fans either side. A block goes no further than about half way to the
+ * middle; what does not fit is returned (it goes to the inner rings).
+ */
+function placeBridges(
+  around: string[],
+  bridges: Map<number, string[]>,
+  total: (id: string) => number,
+  hub: Map<string, Point>,
+  reach: (t: string) => number,
+  pos: Map<string, Point>,
+  labelSide: NonNullable<LinkLayout['labelSide']>,
+): Set<string> {
+  const k = around.length;
+  const spill = new Set<string>();
+  for (const [first, ids] of [...bridges].sort((p, q) => p[0] - q[0])) {
+    const [ta, tb] = [around[first], around[(first + 1) % k]];
+    const [p, q] = [hub.get(ta)!, hub.get(tb)!];
+    const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+    const u = { x: (q.x - p.x) / len, y: (q.y - p.y) / len };
+    const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+    // The normal pointing into the chart.
+    let nIn = { x: -u.y, y: u.x };
+    if (nIn.x * mid.x + nIn.y * mid.y > 0) nIn = { x: -nIn.x, y: -nIn.y };
+    const { perRow, rows: maxRows } = bridgeRows(len - reach(ta) - reach(tb), Math.hypot(mid.x, mid.y));
+    const members = byWeight([...ids], total);
+    const placed = members.slice(0, perRow * maxRows);
+    for (let r = 0; r * perRow < placed.length; r++) {
+      const row = placed.slice(r * perRow, (r + 1) * perRow);
+      const depth = BRIDGE_START + r * SHARED_GAP;
+      centreOut(row.length).forEach((slot, i) => {
+        const along = (slot - (row.length - 1) / 2) * SHARED_GAP;
+        pos.set(row[i], { x: mid.x + nIn.x * depth + u.x * along, y: mid.y + nIn.y * depth + u.y * along });
+        labelSide.set(row[i], 'bottom');
+      });
+    }
+    for (const id of members.slice(placed.length)) spill.add(id);
+  }
+  return spill;
+}
 
 /** An ellipse (half-axes a, b) measured by arc length from its top, clockwise on screen. */
 function ellipseTrack(a: number, b: number, steps = 720) {
@@ -303,6 +492,7 @@ function placeSharedRings(
   b: number,
   pos: Map<string, Point>,
   labelSide: NonNullable<LinkLayout['labelSide']>,
+  rings: number[] = INNER_RINGS,
 ) {
   const wants: { id: string; beta: number; rho: number }[] = [];
   for (const ids of shared.values()) {
@@ -329,9 +519,9 @@ function placeSharedRings(
   }
   wants.sort((p, q) => q.rho - p.rho || total(q.id) - total(p.id) || p.id.localeCompare(q.id));
   let next = 0;
-  INNER_RINGS.forEach((f, j) => {
+  rings.forEach((f, j) => {
     const track = ellipseTrack(ELLIPSE * b * f, b * f);
-    const cap = j === INNER_RINGS.length - 1 ? wants.length - next : Math.floor(track.total / SHARED_GAP);
+    const cap = j === rings.length - 1 ? wants.length - next : Math.floor(track.total / SHARED_GAP);
     const ring = wants.slice(next, next + cap);
     next += ring.length;
     if (!ring.length) return;
@@ -708,7 +898,7 @@ export function packedLayout(net: Network): LinkLayout {
   separate(pos, g.targetIds);
   // Labels point out of the discs: leave room for those on the outer edges.
   const b = boundsOf(pos);
-  return { pos, bounds: { minX: b.minX - LABEL_ROOM, minY: b.minY - 18, maxX: b.maxX + LABEL_ROOM, maxY: b.maxY + 18 }, labelSide };
+  return { pos, bounds: { minX: b.minX - LABEL_ROOM, minY: b.minY - 18, maxX: b.maxX + LABEL_ROOM, maxY: b.maxY + 18 }, labelSide, straightTargetLinks: true };
 }
 
 /** Columns of a contact block under each target, chosen so the whole chart is about 16:9. */

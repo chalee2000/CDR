@@ -52,6 +52,8 @@ export const LINK_THEME = {
 const AUTO_ALL = 40;
 const TOP_LABELS_PER_TARGET = 5;
 const TOP_EDGE_LABELS = 30;
+/** Above this many shared contacts in a dense chart, only this many strongest keep their labels. */
+const CROWDED_SHARED = 16;
 
 export const edgeKey = pairKey;
 
@@ -184,6 +186,18 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       .slice(0, dense ? 10 : TOP_EDGE_LABELS)
       .map((e) => edgeKey(e.source, e.target)),
   );
+  // A dense chart of mostly shared contacts (the cross-target chart) would
+  // label nearly everything: only the strongest shared contacts keep theirs.
+  const sharedNodes = net.nodes.filter((n) => !n.isTarget && n.shared);
+  const crowded = dense && sharedNodes.length > CROWDED_SHARED;
+  const sharedShown = new Set(
+    crowded
+      ? [...sharedNodes]
+          .sort((a, b) => b.weightedDegree - a.weightedDegree || a.id.localeCompare(b.id))
+          .slice(0, CROWDED_SHARED)
+          .map((n) => n.id)
+      : sharedNodes.map((n) => n.id),
+  );
 
   let focusNodes: Set<string> | undefined;
   let focusEdges: Set<string> | undefined;
@@ -221,7 +235,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     const picked = !!input.group?.has(n.id);
     const glow =
       n.id === selectedId ? t.accent : picked ? t.group : mode === 'dark' && n.isTarget && input.colorBy === 'role' ? slotColor(n.slot ?? 99, mode) : undefined;
-    const show = !dim && (input.allLabels || autoAll || n.isTarget || n.shared || !!name || topContacts.has(n.id) || !!focusNodes?.has(n.id));
+    const show = !dim && (input.allLabels || autoAll || n.isTarget || sharedShown.has(n.id) || !!name || topContacts.has(n.id) || !!focusNodes?.has(n.id));
     return {
       id: n.id,
       name: n.id,
@@ -265,7 +279,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     const ratio = Math.log1p(e.weight) / Math.log1p(maxE);
     const width = (routed ? 1.1 + 3 * ratio : 1.2 + 4.8 * ratio + (tt ? 0.6 : 0)) + (focused ? 1 : 0);
     const ends = [byId.get(e.source), byId.get(e.target)];
-    const keyEnd = ends.some((n) => n && !n.isTarget && (n.shared || profiles[n.id]));
+    // Links to shared or identified people are worth a count, unless the
+    // chart is crowded with shared contacts (then only to identified people).
+    const keyEnd = ends.some((n) => n && !n.isTarget && ((n.shared && !crowded) || profiles[n.id]));
     const important = tt || (!dense && keyEnd);
     // A dense chart labels only links that lead somewhere worth reading:
     // fan links' counts would sit on top of the fan's contacts.
@@ -372,9 +388,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         symbol: [e.ba > 0 ? 'arrow' : 'none', e.ab > 0 ? 'arrow' : 'none'],
         symbolSize: Math.min(11, 6 + st.width) * Math.max(nodeScale, 0.7),
         // Links between two targets bow out so they never run through the
-        // shared contacts placed on the straight line between them; packed
-        // discs keep a clear corridor for them instead.
-        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: st.tt && input.layoutMode !== 'packed' ? 0.22 : 0 },
+        // shared contacts placed on the straight line between them, unless
+        // the layout keeps their straight path clear.
+        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: st.tt ? (layout.targetCurves?.get(`${e.source}\u0000${e.target}`) ?? (layout.straightTargetLinks ? 0 : 0.22)) : 0 },
         label: linkLabel(e, st.showLabel, st.colour),
         emphasis: { label: { show: true }, lineStyle: { width: st.width + 1, opacity: 1 } },
         edge: e,

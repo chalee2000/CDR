@@ -146,26 +146,107 @@ describe('hub layout with many targets', () => {
       const a = Math.max(...hubs.map((p) => Math.abs(p.x)));
       const b = Math.max(...hubs.map((p) => Math.abs(p.y)));
       expect(a / b).toBeGreaterThan(1.3);
+      // The ellipse itself: the first target sits at its top, and it is 1.6 times as wide.
+      const [A, B] = [1.6 * b, b];
       for (const x of n.nodes) {
         if (!x.id.startsWith('S')) continue;
         const p = l.pos.get(x.id)!;
-        expect((p.x / a) ** 2 + (p.y / b) ** 2).toBeLessThan(0.75);
+        expect(Math.hypot(p.x / A, p.y / B)).toBeLessThan(0.97);
       }
       const w = l.bounds.maxX - l.bounds.minX;
       const h = l.bounds.maxY - l.bounds.minY;
       expect(w / h).toBeGreaterThan(1.15);
       // Each target's label is set, away from its fan: the lowest target's label goes on top.
       for (const x of n.nodes) if (x.isTarget) expect(l.labelSide?.has(x.id)).toBe(true);
-      // Shared contacts on a ring take turns: labels above and below.
-      const sides = new Set(n.nodes.filter((x) => x.id.startsWith('S')).map((x) => l.labelSide?.get(x.id)));
-      expect(sides).toEqual(new Set(['top', 'bottom']));
+      // These contacts are shared by neighbours: they bridge the gap between
+      // them in a block just inside the ellipse (labels under each), or, if
+      // a block is full, take an inner ring (labels taking turns above and below).
+      for (const x of n.nodes) if (x.id.startsWith('S')) expect(['bottom', 'top']).toContain(l.labelSide?.get(x.id));
+      expect(l.straightTargetLinks).toBe(true);
       const lowest = n.nodes.filter((x) => x.isTarget).sort((p, q) => l.pos.get(q.id)!.y - l.pos.get(p.id)!.y)[0];
       expect(l.labelSide!.get(lowest.id)).toBe('top');
     });
   }
 
-  it('leaves one to three targets as they were (no label sides)', () => {
+  it('leaves one to three targets as they were (no label sides, curved links between targets)', () => {
     expect(hubLayout(synthetic(3, 10, 2)).labelSide).toBeUndefined();
+    expect(hubLayout(synthetic(3, 10, 2)).straightTargetLinks).toBeUndefined();
+  });
+
+  it('puts targets that share the most contacts side by side round the ellipse', () => {
+    const nodes: NetNode[] = [];
+    const edges: NetEdge[] = [];
+    for (let t = 0; t < 6; t++) {
+      nodes.push(node(`T${t}`, true, t));
+      for (let c = 0; c < 4; c++) {
+        nodes.push(node(`T${t}C${c}`));
+        edges.push(edge(`T${t}`, `T${t}C${c}`, 5));
+      }
+    }
+    for (const [a, b] of [
+      [0, 3],
+      [1, 4],
+      [2, 5],
+    ]) {
+      for (let s = 0; s < 6; s++) {
+        nodes.push(node(`S${a}${b}-${s}`));
+        edges.push(edge(`T${a}`, `S${a}${b}-${s}`, 4), edge(`T${b}`, `S${a}${b}-${s}`, 3));
+      }
+    }
+    const net: Network = { nodes, edges, communities: 1, modularity: 0 };
+    const l = hubLayout(net);
+    const round = ['T0', 'T1', 'T2', 'T3', 'T4', 'T5'].sort((p, q) => Math.atan2(l.pos.get(p)!.y, l.pos.get(p)!.x) - Math.atan2(l.pos.get(q)!.y, l.pos.get(q)!.x));
+    for (const [a, b] of [
+      ['T0', 'T3'],
+      ['T1', 'T4'],
+      ['T2', 'T5'],
+    ]) {
+      const d = Math.abs(round.indexOf(a) - round.indexOf(b));
+      expect(Math.min(d, 6 - d)).toBe(1);
+    }
+  });
+
+  it('bridges two neighbours with their shared contacts, just inside the ellipse between them', () => {
+    const n = synthetic(6, 5, 3);
+    n.edges.push(edge('T0', 'T1', 9), edge('T3', 'T2', 4), edge('T0', 'T3', 2));
+    const l = hubLayout(n);
+    // Neighbours' own links bow out round the rim; the one across the chart is straight.
+    for (const [s0, t0] of [
+      ['T0', 'T1'],
+      ['T3', 'T2'],
+    ]) {
+      const c = l.targetCurves!.get(`${s0}\u0000${t0}`)!;
+      const [p, q] = [l.pos.get(s0)!, l.pos.get(t0)!];
+      const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+      const ctrl = { x: mid.x + c * (q.y - p.y), y: mid.y + c * (p.x - q.x) };
+      expect(Math.hypot(ctrl.x, ctrl.y)).toBeGreaterThan(Math.hypot(mid.x, mid.y));
+    }
+    expect(l.targetCurves!.has('T0\u0000T3')).toBe(false);
+    const hubs = n.nodes.filter((x) => x.isTarget).map((x) => l.pos.get(x.id)!);
+    const b = Math.max(...hubs.map((p) => Math.abs(p.y)));
+    const a = 1.6 * b;
+    for (const x of n.nodes) {
+      if (!x.id.startsWith('S')) continue;
+      const t = Number(x.id.slice(1, x.id.indexOf('-')));
+      const [p, q] = [l.pos.get(`T${t}`)!, l.pos.get(`T${(t + 1) % 6}`)!];
+      const c = l.pos.get(x.id)!;
+      const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+      expect(Math.hypot(c.x - mid.x, c.y - mid.y)).toBeLessThan(Math.hypot(c.x, c.y));
+      const r = Math.hypot(c.x / a, c.y / b);
+      expect(r).toBeGreaterThan(0.45);
+      expect(r).toBeLessThan(0.9);
+      // Its lines to the two targets pass no other target.
+      for (const other of n.nodes) {
+        if (!other.isTarget || other.id === `T${t}` || other.id === `T${(t + 1) % 6}`) continue;
+        const o = l.pos.get(other.id)!;
+        for (const end of [p, q]) {
+          const dx = end.x - c.x;
+          const dy = end.y - c.y;
+          const u = Math.max(0, Math.min(1, ((o.x - c.x) * dx + (o.y - c.y) * dy) / (dx * dx + dy * dy)));
+          expect(Math.hypot(o.x - c.x - u * dx, o.y - c.y - u * dy)).toBeGreaterThan(TARGET_GAP / 2);
+        }
+      }
+    }
   });
 });
 
