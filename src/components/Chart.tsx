@@ -13,7 +13,7 @@ interface Props {
   option: EChartsCoreOption;
   height: number | string;
   label: string;
-  onClick?: (params: { name?: string; data?: unknown; dataType?: string }) => void;
+  onClick?: (params: { name?: string; data?: unknown; dataType?: string; event?: { event?: MouseEvent } }) => void;
   /** Click on empty canvas (no chart element under the pointer). */
   onBlankClick?: () => void;
   /** Double click anywhere on the chart. */

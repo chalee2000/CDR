@@ -197,9 +197,9 @@ test('link chart: search, details and a person profile saved to and opened from 
 
   // Double click on the chart works like the full-screen button, and back.
   const mainChart = page.getByRole('img', { name: /^ผังความเชื่อมโยง \d/ });
-  await mainChart.dblclick({ position: { x: 20, y: 20 } });
+  await mainChart.dblclick({ position: { x: 20, y: 60 } });
   await expect(toolbar.getByRole('button', { name: 'ออกจากเต็มจอ' })).toBeVisible();
-  await mainChart.dblclick({ position: { x: 20, y: 20 } });
+  await mainChart.dblclick({ position: { x: 20, y: 60 } });
   await expect(toolbar.getByRole('button', { name: 'เต็มจอ', exact: true })).toBeVisible();
 
   // The chart (with the photo drawn in it) still exports as an image.
@@ -240,14 +240,14 @@ test('link chart: search, details and a person profile saved to and opened from 
   await expect(drawer).toContainText('1-1111-11111-11-9');
   // Double click shows the chart full screen; double click again goes back.
   const exitFull = page.getByRole('button', { name: 'ออกจากเต็มจอ' });
-  await egoChart.dblclick({ position: { x: 20, y: 20 } });
+  await egoChart.dblclick({ position: { x: 20, y: 60 } });
   await expect(exitFull).toBeVisible();
   await expect.poll(async () => (await egoChart.boundingBox())!.height).toBeGreaterThan(600);
-  await egoChart.dblclick({ position: { x: 20, y: 20 } });
+  await egoChart.dblclick({ position: { x: 20, y: 60 } });
   await expect(exitFull).toHaveCount(0);
   await expect.poll(async () => (await egoChart.boundingBox())!.height).toBe(280);
   // Esc leaves full screen only: the number's details stay open.
-  await egoChart.dblclick({ position: { x: 20, y: 20 } });
+  await egoChart.dblclick({ position: { x: 20, y: 60 } });
   await expect(exitFull).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(exitFull).toHaveCount(0);
@@ -261,6 +261,85 @@ test('link chart: search, details and a person profile saved to and opened from 
   await crossLayouts.getByRole('button', { name: /^Hierarchy/ }).click();
   await expect(crossLayouts.getByRole('button', { name: /^Hierarchy/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('img', { name: /^ผังผู้ติดต่อร่วม/ })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('link chart: pick numbers with a box, move them together, keep and put back', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(APP);
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  await page.getByRole('status').filter({ hasText: 'โหลดข้อมูลตัวอย่าง' }).getByRole('button', { name: 'ปิด' }).click();
+  await openTab(page, 'ผังเครือข่าย');
+  const toolbar = page.getByRole('toolbar', { name: 'เครื่องมือผัง' });
+  const chart = page.getByRole('img', { name: /^ผังความเชื่อมโยง \d/ });
+  const total = Number(/ผังความเชื่อมโยง (\d+) เลขหมาย/.exec((await chart.getAttribute('aria-label')) ?? '')![1]);
+  const tools = page.getByRole('group', { name: 'การลากบนผัง' });
+  const status = page.locator('.net-box').getByRole('status');
+  // Dragging empty space draws a selection box by default.
+  await expect(tools.getByRole('button', { name: 'ลากเลือก' })).toHaveAttribute('aria-pressed', 'true');
+
+  await chart.evaluate((el) => el.scrollIntoView({ block: 'end' }));
+  await page.waitForTimeout(500);
+  const box = (await chart.boundingBox())!;
+  const look = async () => {
+    await page.mouse.move(box.x + box.width - 3, box.y + 3);
+    await page.waitForTimeout(700);
+    return chart.screenshot();
+  };
+  const drag = async (from: [number, number], to: [number, number], button: 'left' | 'right' = 'left') => {
+    await page.mouse.move(...from);
+    await page.mouse.down({ button });
+    await page.mouse.move(...to, { steps: 8 });
+    await page.mouse.up({ button });
+  };
+  const empty: [number, number] = [box.x + 150, box.y + 200];
+
+  // A right drag moves the view and picks nothing; "fit" brings it back.
+  const start = await look();
+  await drag(empty, [empty[0] + 80, empty[1] + 60], 'right');
+  expect((await look()).equals(start)).toBe(false);
+  await expect(status).toHaveText('');
+  await toolbar.getByRole('button', { name: 'พอดีกรอบ' }).click();
+  expect((await look()).equals(start)).toBe(true);
+
+  // A box over the whole chart picks every number.
+  await drag([box.x + box.width - 4, box.y + box.height - 4], [box.x + 4, box.y + 4]);
+  await expect(status).toContainText(`เลือก ${total} เลขหมาย`);
+
+  // Dragging one of them moves them all (a searched number is centred left of its panel).
+  await page.getByLabel('ค้นหาเลขหมาย ชื่อ หรือเลขบัตรในผัง').fill('0860000111');
+  await toolbar.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'รายละเอียดเลขหมาย' })).toBeVisible();
+  const before = await look();
+  const centre: [number, number] = [box.x + (box.width - 330) / 2, box.y + box.height / 2];
+  await drag(centre, [centre[0] + 60, centre[1] + 40]);
+  await expect(status).toContainText(`ย้ายแล้ว ${total} เลขหมาย`);
+  const moved = await look();
+  expect(moved.equals(before)).toBe(false);
+
+  // Redrawing the chart keeps the moves.
+  const labels = toolbar.getByRole('button', { name: 'ป้ายชื่อทุกเลข' });
+  await labels.click();
+  await labels.click();
+  expect((await look()).equals(moved)).toBe(true);
+
+  // Put back: the chart is as it was before the move.
+  await page.getByRole('button', { name: 'คืนตำแหน่งเดิม' }).click();
+  await expect(status).not.toContainText('ย้ายแล้ว');
+  expect((await look()).equals(before)).toBe(true);
+  await page.getByRole('button', { name: 'ยกเลิกการเลือก' }).click();
+  await expect(status).toHaveText('');
+
+  // The other tool drags the view with the left button, and is remembered.
+  await tools.getByRole('button', { name: 'เลื่อนผัง' }).click();
+  const still = await look();
+  await drag(empty, [empty[0] + 80, empty[1] + 60]);
+  expect((await look()).equals(still)).toBe(false);
+  await expect(status).toHaveText('');
+  await page.reload();
+  await page.getByRole('button', { name: 'ลองด้วยข้อมูลตัวอย่าง (สมมติ)' }).click();
+  await openTab(page, 'ผังเครือข่าย');
+  await expect(page.getByRole('group', { name: 'การลากบนผัง' }).getByRole('button', { name: 'เลื่อนผัง' })).toHaveAttribute('aria-pressed', 'true');
   expect(errors).toEqual([]);
 });
 

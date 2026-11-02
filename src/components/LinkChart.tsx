@@ -4,9 +4,11 @@ import { layoutFor } from '../lib/analysis/linkLayout';
 import type { Network } from '../lib/analysis/network';
 import type { ThemeMode } from '../lib/palette';
 import type { ProfileMap } from '../lib/profiles';
+import { fmtInt } from '../lib/util';
 import { EChart } from './Chart';
 import { buildLinkOption, type LinkColorBy, type LinkLayoutMode, type LinkSelection } from './linkChartOption';
 import { onPhotoLoad } from './photo';
+import { useLinkTool } from './useLinkTool';
 
 interface Props {
   network: Network;
@@ -85,6 +87,10 @@ export function LinkChart({
     return () => ro.disconnect();
   }, []);
 
+  // Pick numbers with a box and move them (fixed layouts).
+  const marquee = useRef<HTMLDivElement>(null);
+  const { tool, setTool, fixed, moved, group, clearGroup, toggleInGroup, resetMoves, attach } = useLinkTool({ network, layout, layoutMode, view, compact, marquee });
+
   const [full, setFull] = useState<Full>('off');
   const exitFull = useCallback(() => {
     if (wrap.current && document.fullscreenElement === wrap.current) void document.exitFullscreen().catch(() => undefined);
@@ -125,24 +131,35 @@ export function LinkChart({
   useEffect(() => () => clearTimeout(pending.current), []);
 
   const option = useMemo(
-    () => buildLinkOption({ network, layout, mode, layoutMode, colorBy, communitySlots, profiles, unit, allLabels, allEdgeLabels, selection, compact, yearStyle, view }),
+    () => buildLinkOption({ network, layout, mode, layoutMode, colorBy, communitySlots, profiles, unit, allLabels, allEdgeLabels, selection, compact, yearStyle, view, moved, group, tool }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [network, layout, mode, layoutMode, colorBy, communitySlots, profiles, unit, allLabels, allEdgeLabels, selection, compact, yearStyle, view, photoTick],
+    [network, layout, mode, layoutMode, colorBy, communitySlots, profiles, unit, allLabels, allEdgeLabels, selection, compact, yearStyle, view, moved, group, tool, photoTick],
   );
   // A new network, layout mode or explicit reset replaces the chart; anything
   // else (selection, labels, photos, colours, size) merges and keeps the view.
   const structure = useMemo(() => ({}), [network, layoutMode, resetKey]);
 
   return (
-    <div ref={wrap} className={`link-chart${full !== 'off' ? ' is-full' : ''}${full === 'css' ? ' is-max' : ''}`}>
+    <div
+      ref={wrap}
+      className={`link-chart${full !== 'off' ? ' is-full' : ''}${full === 'css' ? ' is-max' : ''}`}
+      // A right drag moves the view, so the browser menu stays away.
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <EChart
         option={option}
         height={full === 'off' ? height : '100%'}
         label={label}
         merge
         resetKey={structure}
-        onReady={onReady}
-        onBlankClick={() => onSelect?.(undefined)}
+        onReady={(c) => {
+          attach(c);
+          onReady?.(c);
+        }}
+        onBlankClick={() => {
+          onSelect?.(undefined);
+          clearGroup();
+        }}
         onDblClick={
           dblAction &&
           (() => {
@@ -155,6 +172,12 @@ export function LinkChart({
           const sel: LinkSelection | undefined =
             p.dataType === 'node' && d?.node ? { type: 'node', id: d.node.id } : p.dataType === 'edge' && d?.edge ? { type: 'edge', source: d.edge.source, target: d.edge.target } : undefined;
           if (!sel) return;
+          // Shift+click adds a number to the picked group, or takes it out.
+          if (fixed && sel.type === 'node' && p.event?.event?.shiftKey) {
+            clearTimeout(pending.current);
+            toggleInGroup(sel.id);
+            return;
+          }
           // What a click opens lives outside the chart: leave full screen to show it.
           const wasFull = full !== 'off';
           const fire = () => {
@@ -166,6 +189,40 @@ export function LinkChart({
           else fire();
         }}
       />
+      <div ref={marquee} className="link-marquee" aria-hidden="true" style={{ display: 'none' }} />
+      {fixed && (
+        <div className="link-tools no-print">
+          <div className="seg" role="group" aria-label="การลากบนผัง">
+            <button
+              type="button"
+              aria-pressed={tool === 'select'}
+              onClick={() => setTool('select')}
+              title="ลากคลุมพื้นที่ว่างเพื่อเลือกหลายเลข แล้วลากเลขที่เลือกเพื่อย้ายทั้งกลุ่ม · กด Shift ค้างเพื่อเลือกเพิ่ม · คลิกขวาค้างแล้วลากเพื่อเลื่อนผัง"
+            >
+              ลากเลือก
+            </button>
+            <button type="button" aria-pressed={tool === 'pan'} onClick={() => setTool('pan')} title="ลากพื้นที่ว่างเพื่อเลื่อนผัง">
+              เลื่อนผัง
+            </button>
+          </div>
+          <span className="link-tools-status" role="status">
+            {group.size > 0 && (
+              <span className="link-tools-pick">
+                เลือก {fmtInt(group.size)} เลขหมาย
+                <button type="button" className="link-tools-x" onClick={clearGroup} aria-label="ยกเลิกการเลือก" title="ยกเลิกการเลือก">
+                  ×
+                </button>
+              </span>
+            )}
+            {!!moved?.size && <span>ย้ายแล้ว {fmtInt(moved.size)} เลขหมาย</span>}
+          </span>
+          {!!moved?.size && (
+            <button className="btn small" type="button" onClick={resetMoves} title="วางทุกเลขกลับตามการจัดวางเดิม">
+              คืนตำแหน่งเดิม
+            </button>
+          )}
+        </div>
+      )}
       {full !== 'off' && (
         <div className="link-full-bar">
           <span>ดับเบิลคลิกหรือกด Esc เพื่อกลับ</span>

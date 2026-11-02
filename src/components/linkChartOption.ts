@@ -1,5 +1,6 @@
 import type { EChartsCoreOption } from 'echarts/core';
-import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout } from '../lib/analysis/linkLayout';
+import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout, type Point } from '../lib/analysis/linkLayout';
+import { boxOf, chartFrame, unionBox, type Box } from '../lib/analysis/linkMove';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -14,6 +15,8 @@ import { iconUrl, type Glyph, type IconSpec } from './linkIcons';
 export type LinkLayoutMode = LayoutKind;
 export type LinkColorBy = 'role' | 'community';
 export type LinkSelection = { type: 'node'; id: string } | { type: 'edge'; source: string; target: string };
+/** What dragging on empty space does: draw a box to pick numbers, or move the view. */
+export type LinkTool = 'select' | 'pan';
 
 export interface LinkChartInput {
   network: Network;
@@ -32,12 +35,17 @@ export interface LinkChartInput {
   yearStyle: 'ce' | 'be';
   /** Size of the drawing area in px (icons shrink when a dense chart must fit). */
   view?: { w: number; h: number };
+  /** Where the user has moved numbers to (chart coordinates), over the layout's. */
+  moved?: Map<string, Point>;
+  /** Numbers picked with the selection box, moved together. */
+  group?: Set<string>;
+  tool?: LinkTool;
 }
 
 /** Theme constants beyond the chart chrome (match the CSS tokens). */
 export const LINK_THEME = {
-  light: { accent: '#256abf', danger: '#b83232', nodeFill: '#ffffff', glyph: '#52514e', link: 0.55 },
-  dark: { accent: '#3987e5', danger: '#e66767', nodeFill: '#2a2a28', glyph: '#d6d5cf', link: 0.65 },
+  light: { accent: '#256abf', danger: '#b83232', nodeFill: '#ffffff', glyph: '#52514e', link: 0.55, group: '#d4a72c' },
+  dark: { accent: '#3987e5', danger: '#e66767', nodeFill: '#2a2a28', glyph: '#d6d5cf', link: 0.65, group: '#d4a72c' },
 } as const;
 
 const AUTO_ALL = 40;
@@ -45,6 +53,30 @@ const TOP_LABELS_PER_TARGET = 5;
 const TOP_EDGE_LABELS = 30;
 
 export const edgeKey = pairKey;
+
+/** Space kept around the chart for labels, in px. */
+function chartPad(compact?: boolean) {
+  return { x: compact ? 64 : 48, y: compact ? 26 : 44 };
+}
+
+/** The area the chart is fitted into, in px. */
+export function drawBox(view: { w: number; h: number } | undefined, compact?: boolean): { w: number; h: number } | undefined {
+  if (!view) return undefined;
+  const pad = chartPad(compact);
+  return { w: view.w - 2 * pad.x, h: view.h - 2 * pad.y - 8 };
+}
+
+/**
+ * What a fixed-layout chart is fitted to: the layout widened to the drawing
+ * area, and any numbers moved beyond it. Holding it still while numbers move
+ * keeps the picture from jumping when a move is kept.
+ */
+export function linkFrame(layout: LinkLayout, view: { w: number; h: number } | undefined, compact?: boolean, moved?: Map<string, Point>): Box {
+  return unionBox(chartFrame(layout.bounds, drawBox(view, compact)), moved?.size ? boxOf(moved.values()) : undefined);
+}
+
+/** Ids of the two invisible points that hold the frame. */
+export const FRAME_IDS = ['__link-frame-0', '__link-frame-1'] as const;
 
 /** Rich-text safe label text (braces and bars delimit ECharts rich styles). */
 function labelText(s: string, max = 30): string {
@@ -121,8 +153,8 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
   const maxE = Math.max(1, ...net.edges.map((e) => e.weight));
   const autoAll = net.nodes.length <= AUTO_ALL;
   const y = input.yearStyle;
-  const padX = compact ? 64 : 48;
-  const padY = compact ? 26 : 44;
+  const { x: padX, y: padY } = chartPad(compact);
+  const fixed = input.layoutMode !== 'force';
 
   // ECharts fits the layout into the box but draws icons at fixed pixel
   // sizes; scale them with the fit so dense charts do not pile up. Layout
@@ -183,9 +215,11 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     const p = profiles[n.id];
     const size = sizeOf(n);
     const name = nameOf(n);
-    const pos = layout.pos.get(n.id) ?? { x: 0, y: 0 };
+    const pos = (fixed && input.moved?.get(n.id)) || layout.pos.get(n.id) || { x: 0, y: 0 };
     const dim = focusNodes && !focusNodes.has(n.id);
-    const glow = n.id === selectedId ? t.accent : mode === 'dark' && n.isTarget && input.colorBy === 'role' ? slotColor(n.slot ?? 99, mode) : undefined;
+    const picked = !!input.group?.has(n.id);
+    const glow =
+      n.id === selectedId ? t.accent : picked ? t.group : mode === 'dark' && n.isTarget && input.colorBy === 'role' ? slotColor(n.slot ?? 99, mode) : undefined;
     const show = !dim && (input.allLabels || autoAll || n.isTarget || n.shared || !!name || topContacts.has(n.id) || !!focusNodes?.has(n.id));
     return {
       id: n.id,
@@ -197,7 +231,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       symbolSize: size,
       itemStyle: {
         opacity: dim ? 0.16 : 1,
-        ...(glow ? { shadowBlur: n.id === selectedId ? 24 : 16, shadowColor: glow } : {}),
+        ...(glow ? { shadowBlur: n.id === selectedId ? 24 : picked ? 20 : 16, shadowColor: glow } : {}),
       },
       label: {
         show,
@@ -260,12 +294,35 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     };
   });
 
+  // Two invisible points at the frame's corners fix what the chart is fitted to.
+  const frame = fixed ? linkFrame(layout, input.view, compact, input.moved) : undefined;
+  const anchors = frame
+    ? [
+        [frame.minX, frame.minY],
+        [frame.maxX, frame.maxY],
+      ].map(([fx, fy], i) => ({
+        id: FRAME_IDS[i],
+        name: FRAME_IDS[i],
+        x: fx,
+        y: fy,
+        value: 0,
+        symbol: 'none',
+        symbolSize: 0,
+        draggable: false,
+        label: { show: false },
+        tooltip: { show: false },
+        emphasis: { disabled: true },
+      }))
+    : [];
+
   const n = net.nodes.length;
   return {
     textStyle: ch.textStyle,
     animationDurationUpdate: 260,
     tooltip: {
       ...ch.tooltip,
+      // Hidden while a selection box is drawn over the numbers.
+      className: 'link-tip',
       formatter: (p: { dataType?: string; data?: { node?: NetNode; edge?: NetEdge } }) => {
         if (p.dataType === 'edge' && p.data?.edge) return edgeTooltip(p.data.edge, byId, profiles, unit, y);
         if (p.dataType === 'node' && p.data?.node) return nodeTooltip(p.data.node, net, profiles, y);
@@ -278,7 +335,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         type: 'graph',
         id: 'link',
         layout: input.layoutMode === 'force' ? 'force' : 'none',
-        roam: true,
+        // With the selection box, dragging empty space picks numbers: the
+        // wheel and pinch still zoom, and the view moves with a right drag.
+        roam: fixed && input.tool === 'select' ? 'scale' : true,
         draggable: true,
         nodeScaleRatio: 0.55,
         top: padY,
@@ -301,7 +360,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         emphasis: { focus: 'adjacency', scale: 1.1, label: { show: true } },
         blur: { itemStyle: { opacity: 0.14 }, lineStyle: { opacity: 0.05 }, label: { opacity: 0.1 } },
         edgeLabel: { show: false },
-        data,
+        data: [...data, ...anchors],
         links,
       },
     ],

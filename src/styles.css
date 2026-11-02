@@ -1262,6 +1262,90 @@ figure.chart {
   font-size: 12.5px;
 }
 
+/* Picking numbers with a box and moving them, top left on every link chart. */
+.link-tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  pointer-events: none;
+}
+
+.link-tools > *,
+.link-tools-status > * {
+  pointer-events: auto;
+}
+
+.link-tools .seg {
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.link-tools .seg button {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.link-tools-status {
+  display: flex;
+  gap: 6px;
+}
+
+.link-tools-status > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.link-tools-pick {
+  border-color: var(--gold) !important;
+  padding-right: 2px !important;
+}
+
+.link-tools-x {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 5px;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.link-tools-x:hover {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.link-tools .btn.small {
+  background: var(--surface);
+}
+
+.link-chart.is-boxing .link-tip {
+  display: none !important;
+}
+
+.link-marquee {
+  position: absolute;
+  z-index: 1;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+
 .link-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
