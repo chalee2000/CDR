@@ -40,6 +40,12 @@
   --tone-place: #b07400;
   --tone-device: #c8406f;
   --tone-data: #0b7fa3;
+  --tone-brand: #1d3a6e;
+  /* Tabs in their colour: the chosen one filled (darkened for white text), icons on a tint. */
+  --tab-fill-dark: 20%;
+  --tab-icon-dark: 12%;
+  --tab-chip: 13%;
+  --tab-on: #ffffff;
   --shadow: 0 1px 2px rgba(13, 26, 51, 0.06), 0 4px 16px rgba(13, 26, 51, 0.07);
   --shadow-sm: 0 1px 2px rgba(13, 26, 51, 0.05), 0 2px 6px rgba(13, 26, 51, 0.04);
   --radius: 12px;
@@ -78,6 +84,11 @@
     --tone-place: #e0a32a;
     --tone-device: #e07aa2;
     --tone-data: #44b4d6;
+  --tone-brand: #8aa8e0;
+  --tab-fill-dark: 0%;
+  --tab-icon-dark: 0%;
+  --tab-chip: 18%;
+  --tab-on: #0a1222;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.25);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   }
@@ -114,6 +125,11 @@
   --tone-place: #e0a32a;
   --tone-device: #e07aa2;
   --tone-data: #44b4d6;
+  --tone-brand: #8aa8e0;
+  --tab-fill-dark: 0%;
+  --tab-icon-dark: 0%;
+  --tab-chip: 18%;
+  --tab-on: #0a1222;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.25);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
@@ -643,8 +659,10 @@ details.settings summary .icon {
 /* ---------------------------------------------------------------- tabs */
 .tabs {
   display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--border);
+  gap: 4px;
+  padding: 4px 2px 0;
+  /* The line under the bar takes the chosen tab's colour. */
+  border-bottom: 2px solid var(--tone, var(--gold));
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -652,40 +670,53 @@ details.settings summary .icon {
 .tabs button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border: none;
   background: transparent;
-  padding: 9px 12px;
+  padding: 6px 12px 6px 6px;
   cursor: pointer;
   color: var(--ink-2);
-  border-bottom: 3px solid transparent;
-  border-radius: 8px 8px 0 0;
+  border-radius: 10px 10px 0 0;
   white-space: nowrap;
   font-size: 14.5px;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 
-.tabs button .icon {
-  color: var(--muted);
-}
-
-.tabs button[aria-selected='true'] {
-  color: var(--ink);
-  background: var(--surface);
-  border-bottom-color: var(--gold);
-  font-weight: 650;
-}
-
-.tabs button[aria-selected='true'] .icon {
-  color: var(--accent);
+/* Each tab's icon on a tint of its own colour. */
+.tab-ico {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tone) var(--tab-chip), transparent);
+  color: color-mix(in srgb, var(--tone), black var(--tab-icon-dark));
 }
 
 .tabs button:hover {
   color: var(--ink);
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--tone) 10%, transparent);
 }
 
+.tabs button[aria-selected='true'],
 .tabs button[aria-selected='true']:hover {
-  background: var(--surface);
+  color: var(--tab-on);
+  background: color-mix(in srgb, var(--tone), black var(--tab-fill-dark));
+  font-weight: 650;
+  box-shadow: 0 -2px 12px color-mix(in srgb, var(--tone) 35%, transparent);
+}
+
+.tabs button[aria-selected='true'] .tab-ico {
+  background: color-mix(in srgb, var(--tab-on) 20%, transparent);
+  color: var(--tab-on);
+}
+
+.tabs button:focus-visible {
+  outline: 2px solid var(--tone);
+  outline-offset: 2px;
 }
 
 .filters {
@@ -803,6 +834,9 @@ details.settings summary .icon {
 }
 [data-tone='data'] {
   --tone: var(--tone-data);
+}
+[data-tone='brand'] {
+  --tone: var(--tone-brand);
 }
 
 .kpi {

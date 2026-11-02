@@ -20,16 +20,19 @@ import { fmtDateTime } from './lib/time';
 import { useStore, type ThemeChoice } from './state/store';
 import { Emblem, Icon, type IconName } from './components/icons';
 
-const TABS: readonly { id: string; label: string; icon: IconName; View: ComponentType }[] = [
-  { id: 'overview', label: 'ภาพรวม', icon: 'grid', View: OverviewView },
-  { id: 'contacts', label: 'คู่ติดต่อ', icon: 'phone', View: ContactsView },
-  { id: 'timeline', label: 'ช่วงเวลา', icon: 'clock', View: TimelineView },
-  { id: 'bursts', label: 'Call burst', icon: 'bolt', View: BurstView },
-  { id: 'locations', label: 'พื้นที่และการเดินทาง', icon: 'pin', View: LocationsView },
-  { id: 'devices', label: 'อุปกรณ์', icon: 'device', View: DevicesView },
-  { id: 'network', label: 'ผังเครือข่าย', icon: 'nodes', View: NetworkView },
-  { id: 'cross', label: 'เชื่อมโยงข้ามเป้าหมาย', icon: 'link', View: CrossView },
-  { id: 'records', label: 'รายการข้อมูล', icon: 'list', View: RecordsView },
+/** A colour of its own for each tab, from the metric families the tiles use. */
+type Tone = 'brand' | 'call' | 'sms' | 'night' | 'time' | 'people' | 'place' | 'device' | 'data';
+
+const TABS: readonly { id: string; label: string; icon: IconName; tone: Tone; View: ComponentType }[] = [
+  { id: 'overview', label: 'ภาพรวม', icon: 'grid', tone: 'brand', View: OverviewView },
+  { id: 'contacts', label: 'คู่ติดต่อ', icon: 'phone', tone: 'call', View: ContactsView },
+  { id: 'timeline', label: 'ช่วงเวลา', icon: 'clock', tone: 'time', View: TimelineView },
+  { id: 'bursts', label: 'Call burst', icon: 'bolt', tone: 'sms', View: BurstView },
+  { id: 'locations', label: 'พื้นที่และการเดินทาง', icon: 'pin', tone: 'place', View: LocationsView },
+  { id: 'devices', label: 'อุปกรณ์', icon: 'device', tone: 'device', View: DevicesView },
+  { id: 'network', label: 'ผังเครือข่าย', icon: 'nodes', tone: 'people', View: NetworkView },
+  { id: 'cross', label: 'เชื่อมโยงข้ามเป้าหมาย', icon: 'link', tone: 'night', View: CrossView },
+  { id: 'records', label: 'รายการข้อมูล', icon: 'list', tone: 'data', View: RecordsView },
 ];
 
 type TabId = string;
@@ -224,10 +227,21 @@ export function App() {
             <Welcome />
           ) : (
             <>
-              <nav className="tabs" role="tablist" aria-label="มุมมองการวิเคราะห์">
+              <nav className="tabs" role="tablist" aria-label="มุมมองการวิเคราะห์" data-tone={active.tone}>
                 {TABS.map((t) => (
-                  <button key={t.id} role="tab" type="button" aria-selected={t.id === tab} aria-controls={`panel-${t.id}`} id={`tab-${t.id}`} onClick={() => setTab(t.id)}>
-                    <Icon name={t.icon} />
+                  <button
+                    key={t.id}
+                    role="tab"
+                    type="button"
+                    aria-selected={t.id === tab}
+                    aria-controls={`panel-${t.id}`}
+                    id={`tab-${t.id}`}
+                    data-tone={t.tone}
+                    onClick={() => setTab(t.id)}
+                  >
+                    <span className="tab-ico">
+                      <Icon name={t.icon} />
+                    </span>
                     {t.label}
                   </button>
                 ))}
