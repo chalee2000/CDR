@@ -4,8 +4,8 @@ import { parseWorkbook } from '../../src/lib/parsers';
 import { generateSamples } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
-import { hierarchyLayout, organizationLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
-import { DROP_STEP, routeOrg, routeTree, type Routes } from '../../src/lib/analysis/linkRoute';
+import { hierarchyLayout, hubLayout, organizationLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
+import { DROP_STEP, routeBundles, routeOrg, routeTree, type Routes } from '../../src/lib/analysis/linkRoute';
 
 const COL_W = 92;
 
@@ -293,5 +293,86 @@ describe('organization: an org chart with right-angled links', () => {
     const routes = routeOrg(net, layout.pos, layout.combs!);
     const bar = routes.pieces.filter((p) => p.kind === 'bus' && Math.abs(where(routes, layout.pos, p.source).y - where(routes, layout.pos, p.target).y) < 0.2);
     expect(bar.length).toBeGreaterThan(0);
+  });
+});
+
+describe('peacock: shared contacts of neighbouring targets on ladders', () => {
+  const six = (() => {
+    const n = synthetic(6, 5, 3);
+    n.edges.push(edge('T0', 'T1', 9, 4), edge('T3', 'T2', 4), edge('T0', 'T3', 2));
+    return n;
+  })();
+  for (const [name, net] of [
+    ['six targets', six],
+    ['ten targets', synthetic(10, 40, 3)],
+    ['shared contacts only', synthetic(5, 0, 8)],
+  ] as const) {
+    it(`${name}: level stubs off upright spines, every link joined up, counts on the stubs`, () => {
+      const layout = hubLayout(net);
+      const { pos } = layout;
+      const routes = routeBundles(net, pos, layout.bundles!, layout.targetCurves);
+      const real = new Set(net.nodes.map((n) => n.id));
+      const bad: string[] = [];
+      let nearest = Infinity;
+      for (const p of routes.pieces) {
+        const a = where(routes, pos, p.source);
+        const b = where(routes, pos, p.target);
+        const [dx, dy] = [Math.abs(a.x - b.x), Math.abs(a.y - b.y)];
+        if (!real.has(p.source) && !real.has(p.target)) {
+          if (dx >= 0.2) bad.push(`spine not upright ${p.source} ${p.target}`);
+        } else if (!real.has(p.source) && real.has(p.target)) {
+          if (dy >= 0.2) bad.push(`stub not level ${p.source} ${p.target}`);
+        } else continue;
+        for (const n of net.nodes) if (n.id !== p.source && n.id !== p.target) nearest = Math.min(nearest, distToSegment(pos.get(n.id)!, a, b));
+      }
+      expect(bad).toEqual([]);
+      expect(nearest).toBeGreaterThanOrEqual(18);
+
+      const byKey = new Map<string, typeof routes.pieces>();
+      for (const p of routes.pieces) for (const k of p.edges) byKey.set(k, [...(byKey.get(k) ?? []), p]);
+      for (const e of net.edges) {
+        const key = pairKey(e.source, e.target);
+        const adj = new Map<string, string[]>();
+        for (const p of byKey.get(key) ?? []) {
+          adj.set(p.source, [...(adj.get(p.source) ?? []), p.target]);
+          adj.set(p.target, [...(adj.get(p.target) ?? []), p.source]);
+        }
+        const seen = new Set([e.source]);
+        const queue = [e.source];
+        while (queue.length) for (const v of adj.get(queue.shift()!) ?? []) if (!seen.has(v)) seen.add(v), queue.push(v);
+        expect(seen.has(e.target)).toBe(true);
+        const labelled = (byKey.get(key) ?? []).filter((p) => p.edges.length === 1 && p.label);
+        expect(labelled).toHaveLength(1);
+        // Arrows follow the calls: from the target to the contact here.
+        const [piece] = labelled;
+        if (!real.has(piece.source)) expect(piece.arrows).toEqual([e.ba > 0, e.ab > 0]);
+      }
+      // Each target's spine is on its own side of the ladder.
+      for (const bd of layout.bundles!) {
+        const x = (t: string) => routes.bends.get(`__bundle:${layout.bundles!.indexOf(bd)}:${t}`)!.x;
+        const [a, b] = [pos.get(bd.a)!, pos.get(bd.b)!];
+        if (Math.abs(a.x - b.x) > 1) expect(Math.sign(x(bd.b) - x(bd.a))).toBe(Math.sign(b.x - a.x));
+        for (const m of bd.members) expect(Math.min(x(bd.a), x(bd.b)) < pos.get(m)!.x && pos.get(m)!.x < Math.max(x(bd.a), x(bd.b))).toBe(true);
+      }
+      expect(routeBundles(net, pos, layout.bundles!, layout.targetCurves)).toEqual(routes);
+    });
+  }
+
+  it('bows links between neighbouring targets out, as the layout says', () => {
+    const layout = hubLayout(six);
+    const routes = routeBundles(six, layout.pos, layout.bundles!, layout.targetCurves);
+    const t01 = routes.pieces.find((p) => p.source === 'T0' && p.target === 'T1')!;
+    expect(t01.curve).toBe(layout.targetCurves!.get('T0\u0000T1'));
+    expect(routes.pieces.find((p) => p.source === 'T0' && p.target === 'T3')!.curve).toBeUndefined();
+  });
+
+  it('follows numbers moved by hand, the stubs still level', () => {
+    const layout = hubLayout(six);
+    const moved = new Map(layout.pos);
+    const [first] = layout.bundles!;
+    const m = first.members[0];
+    moved.set(m, { x: moved.get(m)!.x + 40, y: moved.get(m)!.y + 25 });
+    const routes = routeBundles(six, moved, layout.bundles!, layout.targetCurves);
+    for (const p of routes.pieces.filter((q) => q.target === m)) expect(where(routes, moved, p.source).y).toBeCloseTo(moved.get(m)!.y, 6);
   });
 });

@@ -143,7 +143,7 @@ export function CrossView() {
                 unit="ครั้ง"
                 yearStyle={y}
                 label={`ผังผู้ติดต่อร่วม ${bridges.nodes.length} เลขหมาย`}
-                height={440}
+                height={560}
                 layoutMode={layoutMode}
                 allLabels={allLabels}
                 allEdgeLabels={allLabels}

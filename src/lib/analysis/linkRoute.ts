@@ -38,6 +38,8 @@ export interface RoutePiece {
   stack?: number;
   /** Arrow at the source end, at the target end. */
   arrows?: [boolean, boolean];
+  /** Curveness for a straight piece that should bow (links between neighbouring targets). */
+  curve?: number;
 }
 
 export interface Routes {
@@ -306,6 +308,77 @@ export function routeOrg(net: Network, pos: Map<string, Point>, combs: Map<strin
       }
       for (const h of mine) pieces.push({ source: bend(t, xs[i], r1(at(h.x).y)), target: h.x, edges: [h.key], kind: 'edge', owner: t, label: true, arrows: [h.xToT, h.tToX] });
     }
+  }
+  return { bends, pieces };
+}
+
+/** Contacts shared by two targets, whose links are joined into one trunk to each. */
+export interface Bundle {
+  a: string;
+  b: string;
+  members: string[];
+}
+
+/** A bundle's spines stand this far either side of its contacts. */
+export const SPINE_GAP = 100;
+/** A spine runs on this far past its last contact, to where its trunk meets it. */
+export const SPINE_JOIN = 34;
+
+/**
+ * Bundled links (Peacock with many targets), tidy as a ladder: beside each
+ * bundle's contacts stands a straight up-and-down spine for each of its two
+ * targets (the target further left takes the left one), level stubs run from
+ * a spine to its contacts (each stub carries its link's count and arrows),
+ * and one trunk runs from the spine's end nearer the target to the target.
+ * Every other link is drawn straight (links between neighbouring targets
+ * bowed by `curves`). Worked out from where the numbers are, so it follows
+ * numbers moved by hand.
+ */
+export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bundle[], curves?: Map<string, number>): Routes {
+  const bends = new Map<string, Point>();
+  const pieces: RoutePiece[] = [];
+  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
+  const byKey = new Map(net.edges.map((e) => [pairKey(e.source, e.target), e]));
+  const done = new Set<string>();
+  bundles.forEach((bd, i) => {
+    const pts = bd.members.map(at);
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    const [top, bottom] = [Math.min(...ys), Math.max(...ys)];
+    const [A, B] = [at(bd.a), at(bd.b)];
+    const [left, right] = A.x <= B.x ? [bd.a, bd.b] : [bd.b, bd.a];
+    for (const [t, x] of [
+      [left, Math.min(...xs) - SPINE_GAP],
+      [right, Math.max(...xs) + SPINE_GAP],
+    ] as const) {
+      const T = at(t);
+      const fromTop = T.y < (top + bottom) / 2;
+      const join = `__bundle:${i}:${t}`;
+      bends.set(join, { x, y: fromTop ? top - SPINE_JOIN : bottom + SPINE_JOIN });
+      // Stops down the spine, nearest the trunk first.
+      const stops: { id: string; y: number; key: string }[] = [];
+      bd.members.forEach((m, j) => {
+        const key = pairKey(m, t);
+        const e = byKey.get(key);
+        if (!e) return;
+        done.add(key);
+        const stop = `${join}:${j}`;
+        bends.set(stop, { x, y: pts[j].y });
+        stops.push({ id: stop, y: pts[j].y, key });
+        const mFirst = e.source === m;
+        pieces.push({ source: stop, target: m, edges: [key], kind: 'edge', owner: t, label: true, arrows: [mFirst ? e.ab > 0 : e.ba > 0, mFirst ? e.ba > 0 : e.ab > 0] });
+      });
+      if (!stops.length) continue;
+      stops.sort((p, q) => (fromTop ? p.y - q.y : q.y - p.y));
+      pieces.push({ source: t, target: join, edges: stops.map((st) => st.key), kind: 'bus', owner: t });
+      // The spine, stop by stop: each stretch carries the links beyond it.
+      stops.forEach((st, j) => pieces.push({ source: j ? stops[j - 1].id : join, target: st.id, edges: stops.slice(j).map((o) => o.key), kind: 'bus', owner: t }));
+    }
+  });
+  for (const e of net.edges) {
+    const key = pairKey(e.source, e.target);
+    if (done.has(key)) continue;
+    pieces.push({ source: e.source, target: e.target, edges: [key], kind: 'edge', label: true, arrows: [e.ba > 0, e.ab > 0], curve: curves?.get(`${e.source}\u0000${e.target}`) });
   }
   return { bends, pieces };
 }

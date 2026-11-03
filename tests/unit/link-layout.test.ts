@@ -4,7 +4,7 @@ import { parseWorkbook } from '../../src/lib/parsers';
 import { generateSamples, SAMPLE_TARGETS } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
-import { hierarchyLayout, hubLayout, layoutFor, MIN_GAP, organizationLayout, packedLayout, TARGET_GAP, type LinkLayout } from '../../src/lib/analysis/linkLayout';
+import { hierarchyLayout, hubLayout, layoutFor, MIN_GAP, organizationLayout, packedLayout, TARGET_GAP, type LinkLayout, type Point } from '../../src/lib/analysis/linkLayout';
 
 const datasets = generateSamples().map((wb, i) => {
   const out = parseWorkbook(wb, 'local');
@@ -225,28 +225,86 @@ describe('hub layout with many targets', () => {
     const hubs = n.nodes.filter((x) => x.isTarget).map((x) => l.pos.get(x.id)!);
     const b = Math.max(...hubs.map((p) => Math.abs(p.y)));
     const a = 1.6 * b;
-    for (const x of n.nodes) {
-      if (!x.id.startsWith('S')) continue;
-      const t = Number(x.id.slice(1, x.id.indexOf('-')));
-      const [p, q] = [l.pos.get(`T${t}`)!, l.pos.get(`T${(t + 1) % 6}`)!];
-      const c = l.pos.get(x.id)!;
+    const d = minDistances(n, l);
+    expect(d.contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+    expect(d.toTarget).toBeGreaterThanOrEqual(0.9 * TARGET_GAP);
+    // Every pair of neighbours gets a ladder: its shared contacts in one
+    // straight column between the two, just inside the ellipse.
+    expect(l.bundles).toHaveLength(6);
+    const laddered = new Set<string>();
+    for (const bd of l.bundles!) {
+      const t = Math.min(Number(bd.a.slice(1)), Number(bd.b.slice(1)));
+      const first = t === 0 && [bd.a, bd.b].includes('T5') ? 5 : t;
+      expect(new Set([bd.a, bd.b])).toEqual(new Set([`T${first}`, `T${(first + 1) % 6}`]));
+      expect(bd.members.length).toBeGreaterThan(0);
+      const [p, q] = [l.pos.get(bd.a)!, l.pos.get(bd.b)!];
       const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-      expect(Math.hypot(c.x - mid.x, c.y - mid.y)).toBeLessThan(Math.hypot(c.x, c.y));
-      const r = Math.hypot(c.x / a, c.y / b);
-      expect(r).toBeGreaterThan(0.45);
-      expect(r).toBeLessThan(0.9);
-      // Its lines to the two targets pass no other target.
-      for (const other of n.nodes) {
-        if (!other.isTarget || other.id === `T${t}` || other.id === `T${(t + 1) % 6}`) continue;
-        const o = l.pos.get(other.id)!;
-        for (const end of [p, q]) {
-          const dx = end.x - c.x;
-          const dy = end.y - c.y;
-          const u = Math.max(0, Math.min(1, ((o.x - c.x) * dx + (o.y - c.y) * dy) / (dx * dx + dy * dy)));
-          expect(Math.hypot(o.x - c.x - u * dx, o.y - c.y - u * dy)).toBeGreaterThan(TARGET_GAP / 2);
+      const spots = bd.members.map((id) => l.pos.get(id)!);
+      for (const [i, id] of bd.members.entries()) {
+        expect(id.startsWith(`S${first}-`)).toBe(true);
+        laddered.add(id);
+        const c = spots[i];
+        expect(c.x).toBeCloseTo(spots[0].x, 6);
+        if (i) expect(Math.abs(c.y - spots[i - 1].y)).toBeGreaterThanOrEqual(1.5 * MIN_GAP);
+        // Inside the line between the two, and between them along it.
+        const len = Math.hypot(q.x - p.x, q.y - p.y);
+        const along = ((c.x - p.x) * (q.x - p.x) + (c.y - p.y) * (q.y - p.y)) / len;
+        expect(along).toBeGreaterThan(0);
+        expect(along).toBeLessThan(len);
+        const side = (v: Point) => (q.x - p.x) * (v.y - p.y) - (q.y - p.y) * (v.x - p.x);
+        expect(Math.sign(side(c))).toBe(Math.sign(side({ x: 0, y: 0 })));
+        expect(Math.abs(side(c)) / len).toBeGreaterThan(0.5 * MIN_GAP);
+        const r = Math.hypot(c.x / a, c.y / b);
+        expect(r).toBeLessThan(0.97);
+        expect(Math.hypot(c.x - mid.x, c.y - mid.y)).toBeLessThan(Math.hypot(mid.x, mid.y));
+        expect(l.labelSide!.get(id)).toBe('bottom');
+        // Well clear of every other target.
+        for (const other of n.nodes) {
+          if (!other.isTarget || other.id === bd.a || other.id === bd.b) continue;
+          const o = l.pos.get(other.id)!;
+          expect(Math.hypot(o.x - c.x, o.y - c.y)).toBeGreaterThan(2 * TARGET_GAP);
         }
       }
     }
+    // What does not fit a ladder goes to the inner rings.
+    for (const x of n.nodes) if (x.id.startsWith('S') && !laddered.has(x.id)) expect(['top', 'bottom']).toContain(l.labelSide!.get(x.id));
+  });
+
+  it('keeps ladders apart, clear of the fans and of the targets\' labels', () => {
+    for (const net of [synthetic(10, 40, 3), synthetic(8, 20, 6), synthetic(5, 0, 8)]) {
+      const l = hubLayout(net);
+      expect(l.bundles?.length).toBeGreaterThan(0);
+      const boxes = l.bundles!.map((bd) => {
+        const pts = bd.members.map((id) => l.pos.get(id)!);
+        return { x0: Math.min(...pts.map((p) => p.x)) - 90, x1: Math.max(...pts.map((p) => p.x)) + 90, y0: Math.min(...pts.map((p) => p.y)) - 30, y1: Math.max(...pts.map((p) => p.y)) + 30, bd };
+      });
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          const [p, q] = [boxes[i], boxes[j]];
+          expect(p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1).toBe(false);
+        }
+        // No fan contact inside a ladder's box.
+        for (const x of net.nodes) {
+          if (!/^T\d+C/.test(x.id)) continue;
+          const c = l.pos.get(x.id)!;
+          const bx = boxes[i];
+          expect(c.x > bx.x0 && c.x < bx.x1 && c.y > bx.y0 && c.y < bx.y1).toBe(false);
+        }
+        // Nor a target's label beside it (labels left or right run about three gaps long).
+        for (const x of net.nodes) {
+          if (!x.isTarget) continue;
+          const t = l.pos.get(x.id)!;
+          const side = l.labelSide!.get(x.id);
+          if (side !== 'left' && side !== 'right') continue;
+          const lx0 = side === 'left' ? t.x - 3 * MIN_GAP : t.x;
+          const lx1 = side === 'left' ? t.x : t.x + 3 * MIN_GAP;
+          const bx = boxes[i];
+          expect(lx0 < bx.x1 && bx.x0 < lx1 && t.y - 20 < bx.y1 && bx.y0 < t.y + 20).toBe(false);
+        }
+      }
+      expect(hubLayout(net)).toEqual(l);
+    }
+    expect(hubLayout(synthetic(3, 10, 2)).bundles).toBeUndefined();
   });
 });
 

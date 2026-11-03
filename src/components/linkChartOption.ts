@@ -1,7 +1,7 @@
 import type { EChartsCoreOption } from 'echarts/core';
 import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout, type Point } from '../lib/analysis/linkLayout';
 import { boxOf, chartFrame, unionBox, type Box } from '../lib/analysis/linkMove';
-import { routeOrg, routeTree } from '../lib/analysis/linkRoute';
+import { routeBundles, routeOrg, routeTree } from '../lib/analysis/linkRoute';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -266,7 +266,10 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
   });
 
   // How each link looks, whether drawn straight or in right-angled pieces.
-  const routed = input.layoutMode === 'hierarchy' || input.layoutMode === 'organization';
+  const tree = input.layoutMode === 'hierarchy' || input.layoutMode === 'organization';
+  // Peacock with many targets: each pair's shared contacts joined into one trunk to each target.
+  const bundled = input.layoutMode === 'hub' && !!layout.bundles?.length;
+  const routed = tree || bundled;
   const styleOf = (e: NetEdge) => {
     const key = edgeKey(e.source, e.target);
     const tt = targetIds.has(e.source) && targetIds.has(e.target);
@@ -277,7 +280,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     // Links between targets matter but should not dominate the picture; a
     // hierarchy keeps its lines thin, as an investigation chart does.
     const ratio = Math.log1p(e.weight) / Math.log1p(maxE);
-    const width = (routed ? 1.1 + 3 * ratio : 1.2 + 4.8 * ratio + (tt ? 0.6 : 0)) + (focused ? 1 : 0);
+    const width = (tree ? 1.1 + 3 * ratio : 1.2 + 4.8 * ratio + (tt ? 0.6 : 0)) + (focused ? 1 : 0);
     const ends = [byId.get(e.source), byId.get(e.target)];
     // Links to shared or identified people are worth a count, unless the
     // chart is crowded with shared contacts (then only to identified people).
@@ -332,7 +335,11 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     // Right-angled links: invisible corner points, and each link in straight
     // pieces between them (worked out again whenever numbers are moved).
     const at = new Map(net.nodes.map((n) => [n.id, (fixed && input.moved?.get(n.id)) || layout.pos.get(n.id) || { x: 0, y: 0 }]));
-    const routes = input.layoutMode === 'organization' ? routeOrg(net, at, layout.combs ?? new Map()) : routeTree(net, at);
+    const routes = bundled
+      ? routeBundles(net, at, layout.bundles!, layout.targetCurves)
+      : input.layoutMode === 'organization'
+        ? routeOrg(net, at, layout.combs ?? new Map())
+        : routeTree(net, at);
     const clamp = (v: number, lo = -Infinity, hi = Infinity) => Math.max(lo, Math.min(hi, v));
     bends = [...routes.bends].map(([id, p]) => hidden(id, clamp(p.x, frame?.minX, frame?.maxX), clamp(p.y, frame?.minY, frame?.maxY)));
     const byKey = new Map(net.edges.map((e) => [edgeKey(e.source, e.target), e]));
@@ -340,13 +347,15 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       const focused = !!focusEdges && p.edges.some((k) => focusEdges!.has(k));
       const dim = !!focusEdges && !focused;
       if (p.kind === 'bus') {
-        // A trunk or bus shared by a target's links: thin, in the target's colour.
+        // A trunk or bus shared by a target's links: thin, in the target's
+        // colour (a bundle's trunk thicker the more numbers it carries).
         const colour = input.colorBy === 'community' ? ch.other : slotColor(byId.get(p.owner ?? '')?.slot ?? 99, mode);
+        const width = bundled ? Math.min(5, 1.6 + 0.9 * Math.log2(p.edges.length)) : 1.4;
         return {
           source: p.source,
           target: p.target,
           symbol: ['none', 'none'],
-          lineStyle: { color: colour, width: focused ? 2.4 : 1.4, opacity: dim ? 0.06 : focused ? 0.95 : t.link, curveness: 0 },
+          lineStyle: { color: colour, width: width + (focused ? 1 : 0), opacity: dim ? 0.06 : focused ? 0.95 : t.link, curveness: 0 },
           label: { show: false },
           tooltip: { trigger: 'none' },
           emphasis: { disabled: true },
@@ -361,8 +370,19 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       const from = routes.bends.get(p.source);
       const to = at.get(p.target);
       const upright = drop && !!from && !!to && Math.abs(to.y - from.y) > Math.abs(to.x - from.x);
-      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7);
-      const label = { ...linkLabel(e, !!p.label && st.showLabel, st.colour), ...(upright ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {}) };
+      // A bundle's stubs are short: smaller heads keep its ladder light.
+      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7) * (bundled && drop ? 0.75 : 1);
+      let place: object = upright ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {};
+      if (bundled && drop && from && to) {
+        // A bundle's short stub: the count stands upright just short of the
+        // number, clear of its icon whichever way the stub runs.
+        const len = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+        const [dx, dy] = [Math.abs(to.x - from.x) / len, Math.abs(to.y - from.y) / len];
+        const w = fmtInt(e.weight).length * (dense ? 5.6 : 6.2) + 12;
+        const h = dense ? 15 : 17;
+        place = { position: 'end', distance: -((dx > 0.8 ? w : w / 2) * dx + (dy > 0.8 ? h : h / 2) * dy + 5) };
+      }
+      const label = { ...linkLabel(e, !!p.label && st.showLabel, st.colour), ...place };
       return {
         source: p.source,
         target: p.target,
@@ -372,7 +392,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         // the same way above every number.
         symbol: [p.arrows?.[0] ? 'arrow' : 'none', p.arrows?.[1] ? 'arrow' : drop ? 'circle' : 'none'],
         symbolSize: [arrowSize, p.arrows?.[1] || !drop ? arrowSize : 0.1],
-        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: 0 },
+        lineStyle: { color: st.colour, width: st.width, opacity: st.dim ? 0.06 : st.focused ? 0.95 : st.tt ? 0.75 : t.link, curveness: p.curve ?? 0 },
         label,
         emphasis: { label: { show: !!p.label }, lineStyle: { width: st.width + 1, opacity: 1 } },
         edge: e,
