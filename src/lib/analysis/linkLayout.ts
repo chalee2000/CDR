@@ -1,4 +1,4 @@
-import { LANE_STEP, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, type Bundle, type Comb } from './linkRoute';
+import { JOIN_STEP, LANE_STEP, ladderSides, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, type Bundle, type Comb } from './linkRoute';
 import type { Network } from './network';
 
 /**
@@ -172,7 +172,8 @@ export function hubLayout(net: Network): LinkLayout {
     // evenly spaced along it (those sharing the most contacts side by side)
     // and just far enough apart that neighbouring fans do not meet. Contacts
     // shared by two neighbours bridge the gap between them just inside the
-    // ellipse; the rest get ordered rings further in.
+    // ellipse; the rest go further in, on ladders of those sharing the same
+    // targets or on their own.
     around = aroundTheRing(order, shared, net);
     const maxR = Math.max(RING0, ...order.map(clusterR));
     const unit = ellipseTrack(ELLIPSE, 1);
@@ -183,32 +184,30 @@ export function hubLayout(net: Network): LinkLayout {
     bridges = bridgeGroups(around, shared);
     // A bridge keeps clear of the fans and labels either side of it.
     endOf = (t, p, phi) => ({ p, fanR: clusterR(t) ? clusterR(t) + 0.6 * MIN_GAP : 0, fanSpan: span, phi, side: targetLabelSide(phi) });
-    // The ellipse grows until the inner rings, inside the ladders, hold the
-    // shared contacts that are not on a ladder, and (a little) until every
-    // ladder has room between its two fans.
-    const restCount = [...shared.values()].reduce((n, ids) => n + ids.length, 0) - [...bridges.values()].reduce((n, ids) => n + ids.length, 0);
+    // The ellipse grows until everything shared that is not on a bridge
+    // fits inside it, and (a little) until every bridge has room between its
+    // two fans.
     const where = new Map(around.map((t, i) => [t, i]));
     const room = (bb: number) => {
+      const at = (t: string) => ({ x: bb * spots[where.get(t)!].x, y: bb * spots[where.get(t)!].y });
+      const ends = (t: string) => endOf(t, at(t), outwardAt(spots[where.get(t)!]));
       // Room for every ladder at its full spacing (closed up only if the ellipse may grow no more).
-      const plan = planLadders(
-        around,
-        bridges,
-        total,
-        (t) => {
-          const p = spots[where.get(t)!];
-          return endOf(t, { x: bb * p.x, y: bb * p.y }, outwardAt(p));
-        },
-        LADDER_STEPS.slice(0, 1),
-      );
+      const plan = planLadders(around, bridges, total, ends, LADDER_STEPS.slice(0, 1));
       const spilled = plan.reduce((n, l) => n + l.members.length - l.spots.length, 0);
-      const { rings, clear } = innerRings(plan, bb);
-      const capacity = rings.reduce((n, f) => n + Math.floor((unit.total * bb * f) / SHARED_GAP), 0);
-      return { ringsFit: (clear || restCount + spilled === 0) && capacity >= restCount + spilled, laddersFit: !spilled };
+      const items = innerItems(leftOver(shared, plan), total);
+      const taken = plan.flatMap((l) => (l.box ? [l.box] : []));
+      return { innerFit: placeInner(items, at, ends, around, links, bb, taken), laddersFit: !spilled, items };
     };
+    // A first guess from the room the inside needs (packed loosely).
+    const need = room(b).items.reduce((s, it) => {
+      const { box } = innerShape(it, { x: 0, y: 0 }, LADDER_STEPS[0], () => ({ x: 0, y: 0 }));
+      return s + (box.x1 - box.x0 + INNER_CLEAR) * (box.y1 - box.y0 + INNER_CLEAR);
+    }, 0);
     const b0 = b;
-    for (let i = 0; i < 40; i++) {
+    b = Math.max(b, Math.sqrt(need / (0.4 * Math.PI * ELLIPSE * INNER_LIMIT * INNER_LIMIT)));
+    for (let i = 0; i < 30; i++) {
       const r = room(b);
-      if (r.ringsFit && (r.laddersFit || b >= 1.5 * b0)) break;
+      if (r.innerFit && (r.laddersFit || b >= 1.5 * b0)) break;
       b *= 1.1;
     }
     innerB = b;
@@ -248,15 +247,16 @@ export function hubLayout(net: Network): LinkLayout {
     });
   }
 
-  // Shared contacts: on ordered inner rings when there are many targets,
-  // otherwise between the targets they link, strongest in the middle.
+  // Shared contacts: on ladders (or on their own) when there are many
+  // targets, otherwise between the targets they link, strongest in the middle.
   if (k > 3) {
     const sides = (labelSide ??= new Map());
-    const plan = planLadders(around, bridges, total, (t) => endOf(t, hub.get(t)!, outward.get(t)!));
-    const spill = placeBridges(plan, pos, sides, (bundles ??= []));
-    const rest = new Map([...shared].map(([key, ids]) => [key, ids.filter((id) => !pos.has(id) || spill.has(id))] as const).filter(([, ids]) => ids.length));
-    // The other shared contacts on inner rings, inside the ladders.
-    placeSharedRings(rest, links, total, hub, innerB, pos, sides, innerRings(plan, innerB).rings);
+    const ends = (t: string) => endOf(t, hub.get(t)!, outward.get(t)!);
+    const plan = planLadders(around, bridges, total, ends);
+    placeBridges(plan, pos, sides, (bundles ??= []));
+    // The other shared contacts inside: ladders of those sharing the same targets, and single contacts.
+    const taken = plan.flatMap((l) => (l.box ? [l.box] : []));
+    placeInner(innerItems(leftOver(shared, plan), total), (t) => hub.get(t)!, ends, around, links, innerB, taken, { pos, labelSide: sides, bundles });
     // Neighbours' links bow out round the rim, clear of the bridge between
     // them; links across the chart stay straight.
     const place = new Map(around.map((t, i) => [t, i]));
@@ -311,10 +311,6 @@ export function hubLayout(net: Network): LinkLayout {
 
 /** Width over height of the ellipse many targets sit on (the chart box is wide). */
 const ELLIPSE = 1.6;
-/** Inner rings for shared contacts, as fractions of the targets' ellipse, outermost first. */
-const INNER_RINGS = [0.62, 0.47, 0.33, 0.2];
-/** Gap between shared contacts on a ring: room for a photo and a name. */
-const SHARED_GAP = 1.3 * MIN_GAP;
 /** A bridge (with the ends of its spines) starts this far inside the line between its two targets. */
 const BRIDGE_START = 0.7 * MIN_GAP;
 /**
@@ -379,6 +375,8 @@ interface BridgeEnd {
 function inFan(box: Box, end: BridgeEnd): boolean {
   if (!end.fanR) return false;
   const { p, fanR, phi } = end;
+  // Nowhere near the fan.
+  if (Math.hypot(Math.max(box.x0 - p.x, 0, p.x - box.x1), Math.max(box.y0 - p.y, 0, p.y - box.y1)) >= fanR) return false;
   if (p.x > box.x0 && p.x < box.x1 && p.y > box.y0 && p.y < box.y1) return true;
   const step = 0.2 * MIN_GAP;
   const hit = (x: number, y: number) => {
@@ -549,6 +547,8 @@ interface LadderPlan {
   b: string;
   members: string[];
   spots: Point[];
+  /** What the ladder takes up (with room to spare round it), if placed. */
+  box?: Box;
 }
 
 /**
@@ -564,43 +564,32 @@ function planLadders(around: string[], bridges: Map<number, string[]>, total: (i
     const members = byWeight([...ids], total);
     let ladder: ReturnType<typeof ladderSpots>;
     for (let n = members.length; n > 0 && !(ladder = ladderSpots(n, endOf(a), endOf(b), taken, steps)); n--);
-    if (ladder) taken.push(pad(ladder.box, LADDER_CLEAR));
-    return { a, b, members, spots: ladder?.spots ?? [] };
+    const box = ladder && pad(ladder.box, LADDER_CLEAR);
+    if (box) taken.push(box);
+    return { a, b, members, spots: ladder?.spots ?? [], box };
   });
+}
+
+/** The shared contacts not placed on a bridge, by the targets they share. */
+function leftOver(shared: Map<string, string[]>, plan: LadderPlan[]): Map<string, string[]> {
+  const placed = new Set(plan.flatMap((l) => l.members.slice(0, l.spots.length)));
+  return new Map([...shared].map(([key, ids]) => [key, ids.filter((id) => !placed.has(id))] as const));
 }
 
 /**
  * Puts the planned ladders in place. Their links are drawn joined, one spine
- * and trunk to each target (see routeBundles). What does not fit is returned
- * (it goes to the inner rings).
+ * and trunk to each target (see routeBundles). What does not fit is placed
+ * inside (see placeInner).
  */
-function placeBridges(plan: LadderPlan[], pos: Map<string, Point>, labelSide: NonNullable<LinkLayout['labelSide']>, bundles: Bundle[]): Set<string> {
-  const spill = new Set<string>();
+function placeBridges(plan: LadderPlan[], pos: Map<string, Point>, labelSide: NonNullable<LinkLayout['labelSide']>, bundles: Bundle[]) {
   for (const { a, b, members, spots } of plan) {
     const placed = members.slice(0, spots.length);
     placed.forEach((id, i) => {
       pos.set(id, spots[i]);
       labelSide.set(id, 'bottom');
     });
-    if (placed.length) bundles.push({ a, b, members: placed });
-    for (const id of members.slice(placed.length)) spill.add(id);
+    if (placed.length) bundles.push({ targets: [a, b], members: placed });
   }
-  return spill;
-}
-
-/**
- * The inner rings (as shares of the ellipse b): a gap further in than the
- * deepest ladder, its spines included; `clear` unless the ladders reach so
- * deep that the rings, kept a third of the way out, run into them.
- */
-function innerRings(plan: LadderPlan[], b: number): { rings: number[]; clear: boolean } {
-  let top = INNER_RINGS[0];
-  for (const { spots } of plan) {
-    for (const p of spots) {
-      for (const dx of [-SPINE_GAP, 0, SPINE_GAP]) top = Math.min(top, Math.hypot((p.x + dx) / (ELLIPSE * b), p.y / b) - (1.25 * MIN_GAP) / b);
-    }
-  }
-  return { rings: INNER_RINGS.map((f) => (f * Math.max(0.3, top)) / INNER_RINGS[0]), clear: top >= 0.3 };
 }
 
 /** An ellipse (half-axes a, b) measured by arc length from its top, clockwise on screen. */
@@ -626,85 +615,161 @@ function ellipseTrack(a: number, b: number, steps = 720) {
     const f = (v - len[lo]) / Math.max(1e-9, len[hi] - len[lo]);
     return { x: pts[lo].x + f * (pts[hi].x - pts[lo].x), y: pts[lo].y + f * (pts[hi].y - pts[lo].y) };
   };
-  /** Arc length of the point seen in direction beta from the centre. */
-  const arcOf = (beta: number): number => {
-    const t = Math.atan2(a * Math.sin(beta), b * Math.cos(beta));
-    const i = ((((t + Math.PI / 2) / (2 * Math.PI)) * steps) % steps + steps) % steps;
-    const lo = Math.floor(i);
-    return len[lo] + (i - lo) * (len[lo + 1] - len[lo]);
+  return { total, at };
+}
+
+/** Shared contacts placed inside the ellipse: a ladder of those sharing the same targets, or one contact on its own. */
+interface InnerItem {
+  targets: string[];
+  members: string[];
+}
+
+/** Inner ladders and contacts stay this far inside the ellipse. */
+const INNER_LIMIT = 0.9;
+/** Things placed inside the ellipse are drawn this share of the way from the middle to their targets' weighted middle. */
+const INNER_PULL = 0.85;
+/** Gap kept round each thing placed inside the ellipse. */
+const INNER_CLEAR = 0.15 * MIN_GAP;
+/** The search for room walks out from where a thing would best go in steps this long. */
+const SEARCH_STEP = 0.3 * MIN_GAP;
+
+/**
+ * The shared contacts left for the inside of the ellipse, as items: those
+ * sharing the same targets (two or more of them) make a ladder, the rest go
+ * on their own. Big ladders first, then single contacts, strongest first.
+ */
+function innerItems(rest: Map<string, string[]>, total: (id: string) => number): InnerItem[] {
+  const items = [...rest]
+    .filter(([, ids]) => ids.length)
+    .flatMap(([key, ids]): InnerItem[] => {
+      const targets = key.split('\u0000');
+      const members = byWeight([...ids], total);
+      return members.length >= 2 ? [{ targets, members }] : members.map((m) => ({ targets, members: [m] }));
+    });
+  const weight = (it: InnerItem) => it.members.reduce((s, m) => s + total(m), 0);
+  return items.sort((p, q) => q.members.length - p.members.length || weight(q) - weight(p) || p.members[0].localeCompare(q.members[0]));
+}
+
+/** A thing placed inside the ellipse, centred at c: where its contacts go and the room it takes up. */
+function innerShape(item: InnerItem, c: Point, step: number, at: (id: string) => Point): { spots: Point[]; box: Box } {
+  const n = item.members.length;
+  if (n === 1) return { spots: [c], box: { x0: c.x - LABEL_W / 2, x1: c.x + LABEL_W / 2, y0: c.y - 0.55 * MIN_GAP, y1: c.y + 0.55 * MIN_GAP + LABEL_H } };
+  const top = c.y - ((n - 1) * step) / 2;
+  const bottom = top + (n - 1) * step;
+  const { left, right } = ladderSides(item.targets, at, c.x, c.y);
+  const stagger = Math.max(0, Math.max(left.length, right.length) - 1) * JOIN_STEP;
+  return {
+    spots: item.members.map((_, i) => ({ x: c.x, y: top + i * step })),
+    box: {
+      x0: c.x - SPINE_GAP - Math.max(0, left.length - 1) * SPINE_LANE,
+      x1: c.x + SPINE_GAP + Math.max(0, right.length - 1) * SPINE_LANE,
+      y0: top - SPINE_JOIN - stagger,
+      y1: bottom + Math.max(SPINE_JOIN + stagger, TARGET_R + LABEL_H / 2),
+    },
   };
-  return { total, at, arcOf };
+}
+
+/** Boxes kept in a grid, to find quickly whether a new one would overlap any. */
+function boxGrid() {
+  const cell = 3 * MIN_GAP;
+  const cells = new Map<string, Box[]>();
+  const keys = (b: Box) => {
+    const out: string[] = [];
+    for (let gx = Math.floor(b.x0 / cell); gx <= Math.floor(b.x1 / cell); gx++) for (let gy = Math.floor(b.y0 / cell); gy <= Math.floor(b.y1 / cell); gy++) out.push(`${gx},${gy}`);
+    return out;
+  };
+  return {
+    add(b: Box) {
+      for (const key of keys(b)) {
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key)!.push(b);
+      }
+    },
+    hits(b: Box) {
+      for (const key of keys(b)) for (const o of cells.get(key) ?? []) if (overlaps(o, b)) return true;
+      return false;
+    },
+  };
+}
+
+/** Offsets in order of distance out to r, SEARCH_STEP apart (ties broken the same way every time). */
+function searchOffsets(r: number): Point[] {
+  const n = Math.ceil(r / SEARCH_STEP);
+  const out: Point[] = [];
+  for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) if (i * i + j * j <= n * n) out.push({ x: i * SEARCH_STEP, y: j * SEARCH_STEP });
+  return out.sort((p, q) => p.x * p.x + p.y * p.y - (q.x * q.x + q.y * q.y) || p.y - q.y || p.x - q.x);
 }
 
 /**
- * Shared contacts of many targets: each faces the (weighted) direction of
- * its targets and sits on an inner ring there, in order round the ring.
- * Those whose targets lie close together take the outer ring, nearest
- * them; those linking targets all round the chart go to the inner rings.
+ * The shared contacts that are not on a bridge, inside the ellipse (half
+ * height b): each ladder or contact as near as it can be to where its
+ * targets pull it (their weighted middle, drawn in a little: INNER_PULL),
+ * clear of the bridges, the targets, their labels and fans, and of each
+ * other. With `out`, puts them in place (a ladder that finds no room goes as
+ * single contacts; a contact that finds none goes where it would best be);
+ * without, only checks that everything fits.
  */
-function placeSharedRings(
-  shared: Map<string, string[]>,
+function placeInner(
+  items: InnerItem[],
+  at: (id: string) => Point,
+  endOf: (t: string) => BridgeEnd,
+  targets: string[],
   links: Map<string, Map<string, number>>,
-  total: (id: string) => number,
-  hub: Map<string, Point>,
   b: number,
-  pos: Map<string, Point>,
-  labelSide: NonNullable<LinkLayout['labelSide']>,
-  rings: number[] = INNER_RINGS,
-) {
-  const wants: { id: string; beta: number; rho: number }[] = [];
-  for (const ids of shared.values()) {
-    for (const id of ids) {
-      let x = 0;
-      let y = 0;
-      let w = 0;
-      let strongest = '';
-      let best = -1;
-      for (const [t, weight] of links.get(id) ?? []) {
-        const h = hub.get(t);
-        if (!h) continue;
-        const a = Math.atan2(h.y, h.x);
-        x += weight * Math.cos(a);
-        y += weight * Math.sin(a);
-        w += weight;
-        if (weight > best || (weight === best && t < strongest)) [best, strongest] = [weight, t];
+  taken: Box[],
+  out?: { pos: Map<string, Point>; labelSide: NonNullable<LinkLayout['labelSide']>; bundles: Bundle[] },
+): boolean {
+  const grid = boxGrid();
+  for (const box of taken) grid.add(box);
+  const fixed = targets.flatMap((t) => targetBoxes(at(t), endOf(t).side));
+  const ends = targets.map(endOf);
+  const offsets = searchOffsets(1.8 * b);
+  const inside = (box: Box) =>
+    [box.x0, box.x1].every((x) => [box.y0, box.y1].every((y) => Math.hypot(x / (ELLIPSE * b), y / b) <= INNER_LIMIT));
+  const fits = (box: Box) => inside(box) && !grid.hits(box) && !fixed.some((f) => overlaps(f, box)) && !ends.some((e) => inFan(box, e));
+  const wantAt = (item: InnerItem): Point => {
+    let [x, y, w] = [0, 0, 0];
+    for (const t of item.targets) {
+      const weight = item.members.reduce((s, m) => s + (links.get(m)?.get(t) ?? 0), 0) || 1;
+      x += weight * at(t).x;
+      y += weight * at(t).y;
+      w += weight;
+    }
+    return { x: (INNER_PULL * x) / w, y: (INNER_PULL * y) / w };
+  };
+  const find = (item: InnerItem, steps: number[]) => {
+    const want = wantAt(item);
+    for (const step of steps) {
+      for (const o of offsets) {
+        const shape = innerShape(item, { x: want.x + o.x, y: want.y + o.y }, step, at);
+        if (fits(shape.box)) return shape;
       }
-      const rho = w ? Math.hypot(x, y) / w : 0;
-      const h = hub.get(strongest);
-      const beta = rho > 0.15 || !h ? Math.atan2(y, x) : Math.atan2(h.y, h.x);
-      wants.push({ id, beta, rho });
+    }
+    return undefined;
+  };
+  const put = (item: InnerItem, shape: { spots: Point[]; box: Box }) => {
+    grid.add(pad(shape.box, INNER_CLEAR));
+    if (!out) return;
+    item.members.forEach((m, i) => {
+      out.pos.set(m, shape.spots[i]);
+      out.labelSide.set(m, 'bottom');
+    });
+    if (item.members.length > 1) out.bundles.push({ targets: item.targets, members: item.members });
+  };
+  for (const item of items) {
+    const shape = find(item, item.members.length > 1 ? LADDER_STEPS : [0]);
+    if (shape) {
+      put(item, shape);
+      continue;
+    }
+    if (!out) return false;
+    // No room: the contacts go on their own, or (failing that) where they would best be.
+    for (const m of item.members) {
+      const single = { targets: item.targets, members: [m] };
+      put(single, find(single, [0]) ?? innerShape(single, wantAt(single), 0, at));
     }
   }
-  wants.sort((p, q) => q.rho - p.rho || total(q.id) - total(p.id) || p.id.localeCompare(q.id));
-  let next = 0;
-  rings.forEach((f, j) => {
-    const track = ellipseTrack(ELLIPSE * b * f, b * f);
-    const cap = j === rings.length - 1 ? wants.length - next : Math.floor(track.total / SHARED_GAP);
-    const ring = wants.slice(next, next + cap);
-    next += ring.length;
-    if (!ring.length) return;
-    const want = ring.map((r) => ({ id: r.id, s: track.arcOf(r.beta) })).sort((p, q) => p.s - q.s || p.id.localeCompare(q.id));
-    const n = want.length;
-    const gap = Math.min(SHARED_GAP, track.total / n);
-    // Open the ring at its widest gap, push neighbours apart, re-centre.
-    let cut = 0;
-    let widest = -1;
-    for (let i = 0; i < n; i++) {
-      const g = (want[(i + 1) % n].s - want[i].s + track.total) % track.total || (n === 1 ? track.total : 0);
-      if (g > widest) [widest, cut] = [g, (i + 1) % n];
-    }
-    const order = [...want.slice(cut), ...want.slice(0, cut)];
-    const desired = order.map((o, i) => (i && o.s < order[0].s ? o.s + track.total : o.s));
-    const placed: number[] = [];
-    desired.forEach((d, i) => placed.push(i ? Math.max(d, placed[i - 1] + gap) : d));
-    if (placed[n - 1] - placed[0] + gap > track.total) placed.forEach((_, i) => (placed[i] = placed[0] + (i * track.total) / n));
-    const shift = desired.reduce((acc, d, i) => acc + (d - placed[i]), 0) / n;
-    order.forEach((o, i) => {
-      pos.set(o.id, track.at(placed[i] + shift));
-      // Neighbours on a ring take turns above and below, so their labels have twice the room.
-      labelSide.set(o.id, i % 2 ? 'top' : 'bottom');
-    });
-  });
+  return true;
 }
 
 /** Greedy chain: start from the first target, keep the strongest partner next. */

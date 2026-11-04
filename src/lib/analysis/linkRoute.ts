@@ -312,27 +312,63 @@ export function routeOrg(net: Network, pos: Map<string, Point>, combs: Map<strin
   return { bends, pieces };
 }
 
-/** Contacts shared by two targets, whose links are joined into one trunk to each. */
+/** Contacts shared by the same targets, whose links are joined into one trunk to each. */
 export interface Bundle {
-  a: string;
-  b: string;
+  targets: string[];
   members: string[];
 }
 
-/** A bundle's spines stand this far either side of its contacts. */
+/** A bundle's spines stand this far either side of its contacts (the nearest one). */
 export const SPINE_GAP = 100;
+/** Further spines on the same side stand this much further out, one after another. */
+export const SPINE_LANE = 25;
 /** A spine runs on this far past its last contact, to where its trunk meets it. */
 export const SPINE_JOIN = 34;
+/** Where trunks meet spines on one side: each a step further from the contacts than the next one out. */
+export const JOIN_STEP = 22;
+/** Stubs into one contact from spines on the same side run this far apart, so they do not lie on one another. */
+export const STUB_SPREAD = 6;
+
+/**
+ * Which side of a bundle's column each of its targets takes, nearest spine
+ * first: targets left of the column on the left, the rest on the right (each
+ * side keeps at least one when there are two or more). On a side, the target
+ * seen most steeply above or below takes the spine nearest the column, so the
+ * trunks fan out without crossing.
+ */
+export function ladderSides(targets: string[], at: (id: string) => Point, colX: number, midY: number): { left: string[]; right: string[] } {
+  const sorted = [...targets].sort((p, q) => at(p).x - at(q).x || p.localeCompare(q));
+  const n = sorted.length;
+  const nLeft = Math.max(n >= 2 ? 1 : 0, Math.min(n >= 2 ? n - 1 : n, sorted.filter((t) => at(t).x < colX).length));
+  const steep = (t: string) => Math.abs(at(t).y - midY) / (Math.abs(at(t).x - colX) + 1);
+  const inner = (list: string[]) => list.sort((p, q) => steep(q) - steep(p) || p.localeCompare(q));
+  return { left: inner(sorted.slice(0, nLeft)), right: inner(sorted.slice(nLeft)) };
+}
+
+/**
+ * Where a side's trunks meet its spines (nearest spine first): at the end of
+ * the column nearer each target, past the last contact; spines further out
+ * meet theirs nearer the column, so a trunk to a spine further in passes
+ * beyond the ends of those further out.
+ */
+export function ladderJoins(side: string[], at: (id: string) => Point, top: number, bottom: number): number[] {
+  const mid = (top + bottom) / 2;
+  const fromTop = side.map((t) => at(t).y < mid);
+  return side.map((_, i) => {
+    const same = side.map((__, j) => j).filter((j) => fromTop[j] === fromTop[i]);
+    const further = same.filter((j) => j > i).length;
+    return fromTop[i] ? top - SPINE_JOIN - further * JOIN_STEP : bottom + SPINE_JOIN + further * JOIN_STEP;
+  });
+}
 
 /**
  * Bundled links (Peacock with many targets), tidy as a ladder: beside each
- * bundle's contacts stands a straight up-and-down spine for each of its two
- * targets (the target further left takes the left one), level stubs run from
- * a spine to its contacts (each stub carries its link's count and arrows),
- * and one trunk runs from the spine's end nearer the target to the target.
- * Every other link is drawn straight (links between neighbouring targets
- * bowed by `curves`). Worked out from where the numbers are, so it follows
- * numbers moved by hand.
+ * bundle's column of contacts stands a straight up-and-down spine for each of
+ * its targets (see ladderSides), level stubs run from a spine to its contacts
+ * (each stub carries its link's count and arrows), and one trunk runs from
+ * the spine's end nearer the target to the target. Every other link is drawn
+ * straight (links between neighbouring targets bowed by `curves`). Worked out
+ * from where the numbers are, so it follows numbers moved by hand.
  */
 export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bundle[], curves?: Map<string, number>): Routes {
   const bends = new Map<string, Point>();
@@ -345,34 +381,38 @@ export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bun
     const xs = pts.map((p) => p.x);
     const ys = pts.map((p) => p.y);
     const [top, bottom] = [Math.min(...ys), Math.max(...ys)];
-    const [A, B] = [at(bd.a), at(bd.b)];
-    const [left, right] = A.x <= B.x ? [bd.a, bd.b] : [bd.b, bd.a];
-    for (const [t, x] of [
-      [left, Math.min(...xs) - SPINE_GAP],
-      [right, Math.max(...xs) + SPINE_GAP],
+    const [xMin, xMax] = [Math.min(...xs), Math.max(...xs)];
+    const { left, right } = ladderSides(bd.targets, at, (xMin + xMax) / 2, (top + bottom) / 2);
+    for (const [side, base, dir] of [
+      [left, xMin, -1],
+      [right, xMax, 1],
     ] as const) {
-      const T = at(t);
-      const fromTop = T.y < (top + bottom) / 2;
-      const join = `__bundle:${i}:${t}`;
-      bends.set(join, { x, y: fromTop ? top - SPINE_JOIN : bottom + SPINE_JOIN });
-      // Stops down the spine, nearest the trunk first.
-      const stops: { id: string; y: number; key: string }[] = [];
-      bd.members.forEach((m, j) => {
-        const key = pairKey(m, t);
-        const e = byKey.get(key);
-        if (!e) return;
-        done.add(key);
-        const stop = `${join}:${j}`;
-        bends.set(stop, { x, y: pts[j].y });
-        stops.push({ id: stop, y: pts[j].y, key });
-        const mFirst = e.source === m;
-        pieces.push({ source: stop, target: m, edges: [key], kind: 'edge', owner: t, label: true, arrows: [mFirst ? e.ab > 0 : e.ba > 0, mFirst ? e.ba > 0 : e.ab > 0] });
+      const joins = ladderJoins(side, at, top, bottom);
+      side.forEach((t, lane) => {
+        const x = base + dir * (SPINE_GAP + lane * SPINE_LANE);
+        const dy = (lane - (side.length - 1) / 2) * STUB_SPREAD;
+        const fromTop = joins[lane] < top;
+        const join = `__bundle:${i}:${t}`;
+        bends.set(join, { x, y: joins[lane] });
+        // Stops down the spine, nearest the trunk first.
+        const stops: { id: string; y: number; key: string }[] = [];
+        bd.members.forEach((m, j) => {
+          const key = pairKey(m, t);
+          const e = byKey.get(key);
+          if (!e) return;
+          done.add(key);
+          const stop = `${join}:${j}`;
+          bends.set(stop, { x, y: pts[j].y + dy });
+          stops.push({ id: stop, y: pts[j].y + dy, key });
+          const mFirst = e.source === m;
+          pieces.push({ source: stop, target: m, edges: [key], kind: 'edge', owner: t, label: true, stack: lane, arrows: [mFirst ? e.ab > 0 : e.ba > 0, mFirst ? e.ba > 0 : e.ab > 0] });
+        });
+        if (!stops.length) return;
+        stops.sort((p, q) => (fromTop ? p.y - q.y : q.y - p.y));
+        pieces.push({ source: t, target: join, edges: stops.map((st) => st.key), kind: 'bus', owner: t });
+        // The spine, stop by stop: each stretch carries the links beyond it.
+        stops.forEach((st, j) => pieces.push({ source: j ? stops[j - 1].id : join, target: st.id, edges: stops.slice(j).map((o) => o.key), kind: 'bus', owner: t }));
       });
-      if (!stops.length) continue;
-      stops.sort((p, q) => (fromTop ? p.y - q.y : q.y - p.y));
-      pieces.push({ source: t, target: join, edges: stops.map((st) => st.key), kind: 'bus', owner: t });
-      // The spine, stop by stop: each stretch carries the links beyond it.
-      stops.forEach((st, j) => pieces.push({ source: j ? stops[j - 1].id : join, target: st.id, edges: stops.slice(j).map((o) => o.key), kind: 'bus', owner: t }));
     }
   });
   for (const e of net.edges) {

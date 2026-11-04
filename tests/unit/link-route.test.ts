@@ -5,7 +5,7 @@ import { generateSamples } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
 import { hierarchyLayout, hubLayout, organizationLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
-import { DROP_STEP, routeBundles, routeOrg, routeTree, type Routes } from '../../src/lib/analysis/linkRoute';
+import { DROP_STEP, routeBundles, routeOrg, routeTree, STUB_SPREAD, type Routes } from '../../src/lib/analysis/linkRoute';
 
 const COL_W = 92;
 
@@ -302,10 +302,28 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
     n.edges.push(edge('T0', 'T1', 9, 4), edge('T3', 'T2', 4), edge('T0', 'T3', 2));
     return n;
   })();
+  // Contacts shared every which way: neighbours, targets far apart, three or four at once.
+  const tangled = (() => {
+    const n = synthetic(8, 4, 2);
+    const add = (id: string, ts: number[]) => {
+      n.nodes.push(node(id));
+      ts.forEach((t, i) => n.edges.push(edge(`T${t}`, id, 2 + i, i % 2)));
+    };
+    for (const [name, ts, k] of [
+      ['G024', [0, 2, 4], 3],
+      ['G15', [1, 5], 2],
+      ['G3670', [3, 6, 7, 0], 2],
+      ['G246', [2, 4, 6], 2],
+    ] as const) for (let i = 0; i < k; i++) add(`${name}:${i}`, [...ts]);
+    add('one:a', [0, 3]);
+    n.edges.push(edge('T0', 'T1', 9, 4), edge('T2', 'T6', 4));
+    return n;
+  })();
   for (const [name, net] of [
     ['six targets', six],
     ['ten targets', synthetic(10, 40, 3)],
     ['shared contacts only', synthetic(5, 0, 8)],
+    ['contacts shared every which way', tangled],
   ] as const) {
     it(`${name}: level stubs off upright spines, every link joined up, counts on the stubs`, () => {
       const layout = hubLayout(net);
@@ -321,7 +339,8 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
         if (!real.has(p.source) && !real.has(p.target)) {
           if (dx >= 0.2) bad.push(`spine not upright ${p.source} ${p.target}`);
         } else if (!real.has(p.source) && real.has(p.target)) {
-          if (dy >= 0.2) bad.push(`stub not level ${p.source} ${p.target}`);
+          // Level, or nearly: stubs from spines on the same side run a little apart.
+          if (dy >= 3 * STUB_SPREAD + 0.2) bad.push(`stub not level ${p.source} ${p.target}`);
         } else continue;
         for (const n of net.nodes) if (n.id !== p.source && n.id !== p.target) nearest = Math.min(nearest, distToSegment(pos.get(n.id)!, a, b));
       }
@@ -347,13 +366,32 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
         const [piece] = labelled;
         if (!real.has(piece.source)) expect(piece.arrows).toEqual([e.ba > 0, e.ab > 0]);
       }
-      // Each target's spine is on its own side of the ladder.
-      for (const bd of layout.bundles!) {
-        const x = (t: string) => routes.bends.get(`__bundle:${layout.bundles!.indexOf(bd)}:${t}`)!.x;
-        const [a, b] = [pos.get(bd.a)!, pos.get(bd.b)!];
-        if (Math.abs(a.x - b.x) > 1) expect(Math.sign(x(bd.b) - x(bd.a))).toBe(Math.sign(b.x - a.x));
-        for (const m of bd.members) expect(Math.min(x(bd.a), x(bd.b)) < pos.get(m)!.x && pos.get(m)!.x < Math.max(x(bd.a), x(bd.b))).toBe(true);
-      }
+      layout.bundles!.forEach((bd, i) => {
+        const join = (t: string) => routes.bends.get(`__bundle:${i}:${t}`)!;
+        const colX = pos.get(bd.members[0])!.x;
+        // Spines stand either side of the column, targets further left on the left.
+        const left = bd.targets.filter((t) => join(t).x < colX);
+        const right = bd.targets.filter((t) => join(t).x > colX);
+        expect(left.length + right.length).toBe(bd.targets.length);
+        expect(left.length).toBeGreaterThan(0);
+        expect(right.length).toBeGreaterThan(0);
+        expect(Math.max(...left.map((t) => pos.get(t)!.x))).toBeLessThanOrEqual(Math.min(...right.map((t) => pos.get(t)!.x)) + 1e-6);
+        // A trunk crosses no other spine of its ladder.
+        const spine = (t: string) => {
+          const ends = routes.pieces.filter((p) => p.kind === 'bus' && p.owner === t && p.source.startsWith(`__bundle:${i}:`)).flatMap((p) => [where(routes, pos, p.source), where(routes, pos, p.target)]);
+          return [Math.min(...ends.map((e) => e.y)), Math.max(...ends.map((e) => e.y)), join(t).x] as const;
+        };
+        for (const t of bd.targets) {
+          const [a, b] = [pos.get(t)!, join(t)];
+          for (const o of bd.targets) {
+            if (o === t) continue;
+            const [y0, y1, x] = spine(o);
+            if ((a.x - x) * (b.x - x) >= 0) continue;
+            const y = a.y + ((x - a.x) * (b.y - a.y)) / (b.x - a.x);
+            expect(y > y0 + 0.1 && y < y1 - 0.1, `trunk of ${t} crosses spine of ${o}`).toBe(false);
+          }
+        }
+      });
       expect(routeBundles(net, pos, layout.bundles!, layout.targetCurves)).toEqual(routes);
     });
   }

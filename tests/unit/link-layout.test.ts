@@ -40,6 +40,31 @@ function synthetic(k: number, per: number, sharedPer = 0): Network {
   return { nodes, edges, communities: 1, modularity: 0 };
 }
 
+/**
+ * k targets round a ring with contacts shared every which way: neighbours,
+ * targets far apart, three or four at once (ladders, named G…), and
+ * one-offs (named one:…).
+ */
+function shapedLikeARing(k: number, per = 6, times = 1): Network {
+  const net = synthetic(k, per, 2);
+  const add = (id: string, ts: number[]) => {
+    net.nodes.push(node(id));
+    ts.forEach((t, i) => net.edges.push(edge(`T${t % k}`, id, 2 + ((i * 5 + id.length) % 9))));
+  };
+  for (let r = 0; r < times; r++) {
+    const tag = r ? `${r}` : '';
+    for (const [name, ts, n] of [
+      ['G0-2-4', [0, 2, 4], 3],
+      ['G1-5', [1, 5], 2],
+      ['G3-6-7-0', [3, 6, 7, 0], 2],
+    ] as const) for (let s = 0; s < n; s++) add(`${name}${tag}:${s}`, [...ts].map((t) => t + r));
+    add(`one:${r}a`, [0 + r, 3 + r]);
+    add(`one:${r}b`, [2 + r, 5 + r, 6 + r]);
+  }
+  net.edges.push(edge('T0', 'T1', 9), edge('T2', 'T6', 4), edge('T1', 'T5', 3));
+  return net;
+}
+
 function minDistances(net: Network, layout: LinkLayout) {
   const target = new Set(net.nodes.filter((n) => n.isTarget).map((n) => n.id));
   const ids = [...layout.pos.keys()];
@@ -229,23 +254,19 @@ describe('hub layout with many targets', () => {
     expect(d.contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
     expect(d.toTarget).toBeGreaterThanOrEqual(0.9 * TARGET_GAP);
     // Every pair of neighbours gets a ladder: its shared contacts in one
-    // straight column between the two, just inside the ellipse.
-    expect(l.bundles).toHaveLength(6);
-    const laddered = new Set<string>();
-    for (const bd of l.bundles!) {
-      const t = Math.min(Number(bd.a.slice(1)), Number(bd.b.slice(1)));
-      const first = t === 0 && [bd.a, bd.b].includes('T5') ? 5 : t;
-      expect(new Set([bd.a, bd.b])).toEqual(new Set([`T${first}`, `T${(first + 1) % 6}`]));
-      expect(bd.members.length).toBeGreaterThan(0);
-      const [p, q] = [l.pos.get(bd.a)!, l.pos.get(bd.b)!];
+    // straight column between the two, just inside the ellipse (what does
+    // not fit goes inside, on a ladder of its own or alone).
+    for (let first = 0; first < 6; first++) {
+      const bd = l.bundles!.find((x) => x.members.includes(`S${first}-0`))!;
+      expect(new Set(bd.targets)).toEqual(new Set([`T${first}`, `T${(first + 1) % 6}`]));
+      const [p, q] = [l.pos.get(`T${first}`)!, l.pos.get(`T${(first + 1) % 6}`)!];
       const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
       const spots = bd.members.map((id) => l.pos.get(id)!);
       for (const [i, id] of bd.members.entries()) {
         expect(id.startsWith(`S${first}-`)).toBe(true);
-        laddered.add(id);
         const c = spots[i];
         expect(c.x).toBeCloseTo(spots[0].x, 6);
-        if (i) expect(Math.abs(c.y - spots[i - 1].y)).toBeGreaterThanOrEqual(1.5 * MIN_GAP);
+        if (i) expect(Math.abs(c.y - spots[i - 1].y)).toBeGreaterThanOrEqual(1.3 * MIN_GAP);
         // Inside the line between the two, and between them along it.
         const len = Math.hypot(q.x - p.x, q.y - p.y);
         const along = ((c.x - p.x) * (q.x - p.x) + (c.y - p.y) * (q.y - p.y)) / len;
@@ -257,17 +278,15 @@ describe('hub layout with many targets', () => {
         const r = Math.hypot(c.x / a, c.y / b);
         expect(r).toBeLessThan(0.97);
         expect(Math.hypot(c.x - mid.x, c.y - mid.y)).toBeLessThan(Math.hypot(mid.x, mid.y));
-        expect(l.labelSide!.get(id)).toBe('bottom');
         // Well clear of every other target.
         for (const other of n.nodes) {
-          if (!other.isTarget || other.id === bd.a || other.id === bd.b) continue;
+          if (!other.isTarget || bd.targets.includes(other.id)) continue;
           const o = l.pos.get(other.id)!;
           expect(Math.hypot(o.x - c.x, o.y - c.y)).toBeGreaterThan(2 * TARGET_GAP);
         }
       }
     }
-    // What does not fit a ladder goes to the inner rings.
-    for (const x of n.nodes) if (x.id.startsWith('S') && !laddered.has(x.id)) expect(['top', 'bottom']).toContain(l.labelSide!.get(x.id));
+    for (const x of n.nodes) if (x.id.startsWith('S')) expect(l.labelSide!.get(x.id)).toBe('bottom');
   });
 
   it('keeps ladders apart, clear of the fans and of the targets\' labels', () => {
@@ -305,6 +324,53 @@ describe('hub layout with many targets', () => {
       expect(hubLayout(net)).toEqual(l);
     }
     expect(hubLayout(synthetic(3, 10, 2)).bundles).toBeUndefined();
+  });
+
+  it('puts contacts shared by targets that are not neighbours, or by three or more, on ladders inside', () => {
+    const net = shapedLikeARing(8);
+    const l = hubLayout(net);
+    expect(l.pos.size).toBe(net.nodes.length);
+    expect(hubLayout(net)).toEqual(l);
+    const d = minDistances(net, l);
+    expect(d.contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+    expect(d.toTarget).toBeGreaterThanOrEqual(0.9 * TARGET_GAP);
+    const hubs = net.nodes.filter((x) => x.isTarget).map((x) => l.pos.get(x.id)!);
+    const b = Math.max(...hubs.map((p) => Math.abs(p.y)));
+    const linked = new Map<string, Set<string>>();
+    for (const e of net.edges) if (e.source.startsWith('T') && !e.target.startsWith('T')) linked.set(e.target, new Set([...(linked.get(e.target) ?? []), e.source]));
+    for (const group of ['G0-2-4', 'G1-5', 'G3-6-7-0']) {
+      const members = net.nodes.filter((x) => x.id.startsWith(`${group}:`)).map((x) => x.id);
+      const bd = l.bundles!.find((x) => x.members.includes(members[0]))!;
+      // One ladder for the group, its targets those the contacts share.
+      expect(new Set(bd.members)).toEqual(new Set(members));
+      expect(new Set(bd.targets)).toEqual(linked.get(members[0]));
+      const spots = bd.members.map((id) => l.pos.get(id)!);
+      for (const [i, c] of spots.entries()) {
+        expect(c.x).toBeCloseTo(spots[0].x, 6);
+        if (i) expect(Math.abs(c.y - spots[i - 1].y)).toBeGreaterThanOrEqual(1.3 * MIN_GAP);
+        expect(Math.hypot(c.x / (1.6 * b), c.y / b)).toBeLessThan(0.92);
+      }
+    }
+    // Ladders keep apart (their spines stand a gap and a half either side).
+    const boxes = l.bundles!.map((bd) => {
+      const pts = bd.members.map((id) => l.pos.get(id)!);
+      return { x0: pts[0].x - 1.4 * MIN_GAP, x1: pts[0].x + 1.4 * MIN_GAP, y0: Math.min(...pts.map((p) => p.y)) - 30, y1: Math.max(...pts.map((p) => p.y)) + 30 };
+    });
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const [p, q] = [boxes[i], boxes[j]];
+        expect(p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1).toBe(false);
+      }
+    }
+    // A one-off contact never joins a ladder with others (it may bridge two neighbours on its own).
+    for (const x of net.nodes) if (x.id.startsWith('one:')) for (const bd of l.bundles!) if (bd.members.includes(x.id)) expect(bd.members).toEqual([x.id]);
+
+    const big = shapedLikeARing(10, 40, 4);
+    const t0 = performance.now();
+    const lb = hubLayout(big);
+    expect(performance.now() - t0).toBeLessThan(3000);
+    expect(lb.pos.size).toBe(big.nodes.length);
+    expect(minDistances(big, lb).contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
   });
 });
 

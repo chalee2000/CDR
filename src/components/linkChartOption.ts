@@ -380,7 +380,8 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         const [dx, dy] = [Math.abs(to.x - from.x) / len, Math.abs(to.y - from.y) / len];
         const w = fmtInt(e.weight).length * (dense ? 5.6 : 6.2) + 12;
         const h = dense ? 15 : 17;
-        place = { position: 'end', distance: -((dx > 0.8 ? w : w / 2) * dx + (dy > 0.8 ? h : h / 2) * dy + 5) };
+        // Counts from spines further out stand further along their stubs.
+        place = { position: 'end', distance: -((dx > 0.8 ? w : w / 2) * dx + (dy > 0.8 ? h : h / 2) * dy + 5 + (p.stack ?? 0) * (w + 4)) };
       }
       const label = { ...linkLabel(e, !!p.label && st.showLabel, st.colour), ...place };
       return {
