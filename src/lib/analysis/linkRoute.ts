@@ -405,31 +405,16 @@ export function ladderJoins(side: string[], at: (id: string) => Point, top: numb
   });
 }
 
-/** A target's links into the chart part from one cable this far in (as a share of the way to where they go), within these bounds. */
-const SPLIT_SHARE = 0.3;
-const SPLIT_MIN = 75;
-const SPLIT_MAX = 250;
-/** The ring road bends at least this often (radians), so it follows the ellipse. */
-const ROAD_BEND = (6 * Math.PI) / 180;
-
 /**
- * Bundled links (Peacock with many targets), tidy as a ladder: beside each
- * bundle's column of contacts stands a straight up-and-down spine for each of
- * its targets (see ladderSides), level stubs run from a spine to its contacts
- * (each stub carries its link's count and arrows), and one trunk runs from
- * the spine's end nearer the target to the target.
- *
- * A target's links into the chart (trunks to ladders inside, links to
- * contacts on their own) leave it as one cable and part a little way in.
- * Links between neighbouring targets bow out (`curves`); with a `road`, links
- * between other targets run round the outside on it; anything else is drawn
- * straight. Worked out from where the numbers are, so it follows numbers
- * moved by hand.
+ * The ladders of bundled contacts (see routeBundles): beside each column a
+ * spine for each target, level stubs from it to the contacts (each carrying
+ * its link's count and arrows), stop by stop. Returns the trunks still to be
+ * laid, one per target and ladder, from the target to where it meets its
+ * spine (`join`), and the links done.
  */
-export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bundle[], curves?: Map<string, number>, road?: Road): Routes {
+function ladderParts(net: Network, at: (id: string) => Point, bundles: Bundle[]) {
   const bends = new Map<string, Point>();
   const pieces: RoutePiece[] = [];
-  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
   const byKey = new Map(net.edges.map((e) => [pairKey(e.source, e.target), e]));
   const done = new Set<string>();
   // Trunks, laid once every target's cable is known.
@@ -473,6 +458,33 @@ export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bun
       });
     }
   });
+  return { bends, pieces, trunks, done };
+}
+
+/** A target's links into the chart part from one cable this far in (as a share of the way to where they go), within these bounds. */
+const SPLIT_SHARE = 0.3;
+const SPLIT_MIN = 75;
+const SPLIT_MAX = 250;
+/** The ring road bends at least this often (radians), so it follows the ellipse. */
+const ROAD_BEND = (6 * Math.PI) / 180;
+
+/**
+ * Bundled links (Peacock with many targets), tidy as a ladder: beside each
+ * bundle's column of contacts stands a straight up-and-down spine for each of
+ * its targets (see ladderSides), level stubs run from a spine to its contacts
+ * (each stub carries its link's count and arrows), and one trunk runs from
+ * the spine's end nearer the target to the target.
+ *
+ * A target's links into the chart (trunks to ladders inside, links to
+ * contacts on their own) leave it as one cable and part a little way in.
+ * Links between neighbouring targets bow out (`curves`); with a `road`, links
+ * between other targets run round the outside on it; anything else is drawn
+ * straight. Worked out from where the numbers are, so it follows numbers
+ * moved by hand.
+ */
+export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bundle[], curves?: Map<string, number>, road?: Road): Routes {
+  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
+  const { bends, pieces, trunks, done } = ladderParts(net, at, bundles);
 
   const isTarget = new Set(net.nodes.filter((n) => n.isTarget).map((n) => n.id));
   const targetsOf = new Map<string, number>();
@@ -812,6 +824,132 @@ export function routeStreets(net: Network, pos: Map<string, Point>, homes: Map<s
       const fFirst = e.source === r.from;
       pieces.push({ source: end, target: contact(e), edges: [pairKey(e.source, e.target)], kind: 'edge', owner: r.from, label: true, arrows: [(fFirst ? e.ba : e.ab) > 0, (fFirst ? e.ab : e.ba) > 0] });
     }
+  }
+  return { bends, pieces };
+}
+
+/**
+ * Organization with only shared contacts: the y of the targets' row, and of
+ * the first lane above it (`up`) and below it (`down`); lanes go on outwards.
+ */
+export interface OrgBands {
+  row: number;
+  up: number;
+  down: number;
+}
+
+/** Lanes of an org chart's bands lie this far apart. */
+export const ORG_LANE_STEP = 9;
+
+type OrgRun = { key: string; band: 'up' | 'down'; lo: number; hi: number; tt: boolean; t?: string; join?: string; keys?: string[]; e?: NetEdge };
+
+/**
+ * The runs of an org chart of ladders and their lanes: a trunk from each
+ * target to each of its ladders, in the band (above or below the row) the
+ * ladder stands in, and links between targets, below the row on the lanes
+ * nearest it. Runs that would lie along each other take different lanes.
+ */
+function orgPlan(net: Network, at: (id: string) => Point, trunks: { t: string; join: string; keys: string[] }[], bends: Map<string, Point>, done: Set<string>, bands: OrgBands) {
+  const isTarget = new Set(net.nodes.filter((n) => n.isTarget).map((n) => n.id));
+  const runs: OrgRun[] = [];
+  for (const tr of trunks) {
+    const [T, J] = [at(tr.t), bends.get(tr.join)!];
+    runs.push({ key: `${tr.t}>${tr.join}`, band: J.y < bands.row ? 'up' : 'down', lo: Math.min(T.x, J.x), hi: Math.max(T.x, J.x), tt: false, t: tr.t, join: tr.join, keys: tr.keys });
+  }
+  for (const e of net.edges) {
+    const key = pairKey(e.source, e.target);
+    if (done.has(key) || !isTarget.has(e.source) || !isTarget.has(e.target) || e.source === e.target) continue;
+    const [a, b] = [at(e.source), at(e.target)];
+    runs.push({ key, band: 'down', lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x), tt: true, e });
+  }
+  const lanes = new Map<string, number>();
+  const counts = { up: 0, down: 0 };
+  for (const band of ['up', 'down'] as const) {
+    let offset = 0;
+    for (const tt of [true, false]) {
+      const list = runs.filter((r) => r.band === band && r.tt === tt);
+      if (!list.length) continue;
+      const level = levels(list, (r) => [r.lo, r.hi], (p, q) => p.key.localeCompare(q.key));
+      for (const [r, l] of level) lanes.set(r.key, offset + l);
+      offset += Math.max(...level.values()) + 1;
+    }
+    counts[band] = offset;
+  }
+  return { runs, lanes, counts };
+}
+
+/** How many lanes an org chart of ladders needs above and below its targets' row. */
+export function orgLaneCounts(net: Network, pos: Map<string, Point>, bundles: Bundle[], bands: OrgBands) {
+  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
+  const { bends, trunks, done } = ladderParts(net, at, bundles);
+  return orgPlan(net, at, trunks, bends, done, bands).counts;
+}
+
+/**
+ * Organization with only shared contacts, tidy as an org chart: the targets
+ * in a row, their shared contacts on ladders (see routeBundles) above and
+ * below it. From each target one line goes up (and one down), parting at
+ * each lane into a run along it to a ladder's spine, which it meets from the
+ * row's side. Links between targets run below the row on their own lanes,
+ * whole, with their arrows at the targets. Worked out from where the numbers
+ * are, so it follows numbers moved by hand.
+ */
+export function routeOrgLadders(net: Network, pos: Map<string, Point>, bundles: Bundle[], bands: OrgBands): Routes {
+  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
+  const { bends, pieces, trunks, done } = ladderParts(net, at, bundles);
+  const { runs, lanes } = orgPlan(net, at, trunks, bends, done, bands);
+  const laneY = (r: OrgRun) => (r.band === 'up' ? bands.up - lanes.get(r.key)! * ORG_LANE_STEP : bands.down + lanes.get(r.key)! * ORG_LANE_STEP);
+  // Anything else (not expected) goes straight.
+  const ttKeys = new Set(runs.filter((r) => r.tt).map((r) => r.key));
+  for (const e of net.edges) {
+    const key = pairKey(e.source, e.target);
+    if (!done.has(key) && !ttKeys.has(key)) pieces.push({ source: e.source, target: e.target, edges: [key], kind: 'edge', label: true, arrows: [e.ba > 0, e.ab > 0] });
+  }
+  // Trunks: one line from each target into each band, parting at each lane.
+  const targets = [...new Set(runs.filter((r) => !r.tt).map((r) => r.t!))].sort();
+  for (const t of targets) {
+    const T = at(t);
+    for (const band of ['up', 'down'] as const) {
+      const mine = runs.filter((r) => !r.tt && r.t === t && r.band === band).sort((p, q) => lanes.get(p.key)! - lanes.get(q.key)! || p.key.localeCompare(q.key));
+      let prev = t;
+      mine.forEach((r, i) => {
+        const turn = `__org:${r.key}:turn`;
+        bends.set(turn, { x: T.x, y: laneY(r) });
+        pieces.push({ source: prev, target: turn, edges: mine.slice(i).flatMap((o) => o.keys!), kind: 'bus', owner: t });
+        prev = turn;
+        const J = bends.get(r.join!)!;
+        if (Math.abs(J.x - T.x) > 0.5) {
+          const under = `__org:${r.key}:under`;
+          bends.set(under, { x: J.x, y: laneY(r) });
+          pieces.push({ source: turn, target: under, edges: r.keys!, kind: 'bus', owner: t });
+          pieces.push({ source: under, target: r.join!, edges: r.keys!, kind: 'bus', owner: t });
+        } else pieces.push({ source: turn, target: r.join!, edges: r.keys!, kind: 'bus', owner: t });
+      });
+    }
+  }
+  // Links between targets: down from each end on a line of its own, along a lane, and up again.
+  const tts = runs.filter((r) => r.tt);
+  const legX = new Map<string, number>();
+  const ends = [...new Set(tts.flatMap((r) => [r.e!.source, r.e!.target]))];
+  for (const t of ends) {
+    const T = at(t);
+    const mine = tts.filter((r) => r.e!.source === t || r.e!.target === t);
+    const other = (r: OrgRun) => at(r.e!.source === t ? r.e!.target : r.e!.source).x;
+    // Further lanes nearer the centre line, so legs do not cross the lanes of others.
+    const left = mine.filter((r) => other(r) < T.x).sort((p, q) => lanes.get(q.key)! - lanes.get(p.key)! || p.key.localeCompare(q.key));
+    const right = mine.filter((r) => other(r) >= T.x).sort((p, q) => lanes.get(q.key)! - lanes.get(p.key)! || p.key.localeCompare(q.key));
+    left.forEach((r, i) => legX.set(`${r.key}@${t}`, T.x - (i + 1) * LEG_STEP));
+    right.forEach((r, i) => legX.set(`${r.key}@${t}`, T.x + (i + 1) * LEG_STEP));
+  }
+  for (const r of tts) {
+    const e = r.e!;
+    const y = laneY(r);
+    const [a, b] = [`__org:${r.key}:a`, `__org:${r.key}:b`];
+    bends.set(a, { x: legX.get(`${r.key}@${e.source}`)!, y });
+    bends.set(b, { x: legX.get(`${r.key}@${e.target}`)!, y });
+    pieces.push({ source: e.source, target: a, edges: [r.key], kind: 'edge', arrows: [e.ba > 0, false] });
+    pieces.push({ source: a, target: b, edges: [r.key], kind: 'edge', label: true, arrows: [false, false] });
+    pieces.push({ source: b, target: e.target, edges: [r.key], kind: 'edge', arrows: [false, e.ab > 0] });
   }
   return { bends, pieces };
 }

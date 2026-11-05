@@ -1,4 +1,4 @@
-import { JOIN_STEP, LANE_STEP, ladderSides, planStreets, roadPlan, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, STREET_STEP, streetRuns, type Bundle, type Comb, type Road, type StreetGrid } from './linkRoute';
+import { JOIN_STEP, LANE_STEP, ladderSides, ORG_LANE_STEP, orgLaneCounts, planStreets, roadPlan, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, STREET_STEP, streetRuns, type Bundle, type Comb, type OrgBands, type Road, type StreetGrid } from './linkRoute';
 import type { Network } from './network';
 
 /**
@@ -35,6 +35,10 @@ export interface LinkLayout {
   homes?: Map<string, string>;
   /** Packed: the streets between the discs that links between them run along. */
   streets?: StreetGrid;
+  /** Organization with only shared contacts: the targets' row and the first lanes above and below it. */
+  orgBands?: OrgBands;
+  /** Labels lifted (-1) or lowered (1) about a line from beside their icon. */
+  labelShift?: Map<string, number>;
 }
 
 /** The ways a link chart can be laid out (force is computed by the chart itself). */
@@ -1433,11 +1437,13 @@ const ORG_LABEL_ROOM = 90;
  */
 export function organizationLayout(net: Network): LinkLayout {
   const g = classify(net);
+  const k = g.order.length;
+  const counts = g.order.map((t) => g.exclusive.get(t)?.length ?? 0);
+  // Only shared contacts (the cross-target chart): ladders above and below the targets.
+  if (k >= 2 && g.shared.size && counts.every((n) => !n) && !g.loose.length) return orgLadderLayout(net, g);
   const pos = new Map<string, Point>();
   const labelSide: NonNullable<LinkLayout['labelSide']> = new Map();
   const combs = new Map<string, Comb>();
-  const k = g.order.length;
-  const counts = g.order.map((t) => g.exclusive.get(t)?.length ?? 0);
   const ttCount = net.edges.filter((e) => g.targetIds.has(e.source) && g.targetIds.has(e.target)).length;
   const sharedCount = [...g.shared.values()].reduce((s, ids) => s + ids.length, 0);
 
@@ -1498,4 +1504,120 @@ export function organizationLayout(net: Network): LinkLayout {
   // Shared contacts' labels sit above them; in a tight row, every other one a line higher.
   const labelLower = staggerRows(pos, [...g.shared.values()].flat());
   return { pos, bounds: { minX: b.minX - ORG_LABEL_ROOM, minY: b.minY - 40, maxX: b.maxX + ORG_LABEL_ROOM, maxY: b.maxY + 20 }, labelSide, labelLower, combs };
+}
+
+/** Organization with only shared contacts: targets at least this far apart (an icon and a name beside it). */
+const ORG_TARGET_MIN = 4.5 * MIN_GAP;
+/** Between ladders in a band. */
+const ORG_LADDER_GAP = 0.5 * MIN_GAP;
+/** From the targets' row to its first lane, and from the last lane to the ladders. */
+const ORG_LANE_IN = TARGET_R + 0.4 * MIN_GAP;
+const ORG_LANE_OUT = 0.6 * MIN_GAP;
+
+/**
+ * Organization with only shared contacts (the cross-target chart): the
+ * targets in a row, wide enough apart for their names; the shared contacts on
+ * ladders (see innerItems; one contact alone makes a ladder of one), in order
+ * of where their targets are, every other one above the row and the rest
+ * below, so the chart is half as wide; each band as far from the row as its
+ * lanes need (see routeOrgLadders). The row widens to match the bands.
+ */
+function orgLadderLayout(net: Network, g: Groups): LinkLayout {
+  const groups = innerItems(g.shared, g.total, g.links);
+  const k = g.order.length;
+  const index = new Map(g.order.map((t, i) => [t, i]));
+  const step = LADDER_STEPS[0];
+  // Long ladders cut into shorter ones (each with the targets its contacts
+  // link to), as short as brings the chart nearest 16:9.
+  const cut = (most: number): InnerItem[] =>
+    groups.flatMap((it) =>
+      Array.from({ length: Math.ceil(it.members.length / most) }, (_, i) => {
+        const members = it.members.slice(i * most, (i + 1) * most);
+        return { targets: it.targets.filter((t) => members.some((m) => g.links.get(m)?.has(t))), members };
+      }),
+    );
+  const ladderW = (it: InnerItem) => 2 * SPINE_GAP + Math.max(0, it.targets.length - 2) * SPINE_LANE + ORG_LADDER_GAP;
+  const ladderH = (it: InnerItem) => (it.members.length - 1) * step + SPINE_JOIN + TARGET_R + LABEL_H;
+  let items = groups;
+  let best = Infinity;
+  for (let most = 1; most <= Math.max(1, ...groups.map((it) => it.members.length)); most++) {
+    const list = cut(most);
+    const bandW = (odd: number) => list.filter((_, i) => i % 2 === odd).reduce((sum, it) => sum + ladderW(it), 0);
+    const w = Math.max(bandW(0), bandW(1), k * ORG_TARGET_MIN);
+    const h = 2 * Math.max(...list.map(ladderH)) + 2 * ORG_LANE_IN + 2 * MIN_GAP;
+    const score = Math.abs(Math.log(w / h / (16 / 9)));
+    if (score < best - 1e-9) [items, best] = [list, score];
+  }
+  let spacing = ORG_TARGET_MIN;
+  let placed: { item: InnerItem; up: boolean; x: number }[] = [];
+  for (let pass = 0; pass < 4; pass++) {
+    const at = (t: string) => ({ x: (index.get(t)! - (k - 1) / 2) * spacing, y: 0 });
+    const want = (it: InnerItem) => {
+      let [x, w] = [0, 0];
+      for (const t of it.targets) {
+        const weight = it.members.reduce((s, m) => s + (g.links.get(m)?.get(t) ?? 0), 0) || 1;
+        x += weight * at(t).x;
+        w += weight;
+      }
+      return x / w;
+    };
+    const order = items.map((item) => ({ item, want: want(item) })).sort((p, q) => p.want - q.want || p.item.members[0].localeCompare(q.item.members[0]));
+    placed = [];
+    let span = 0;
+    for (const up of [true, false]) {
+      const band = order.filter((_, i) => i % 2 === (up ? 0 : 1));
+      const xs: number[] = [];
+      const shapes = band.map((b) => innerShape(b.item, { x: b.want, y: 0 }, step, at));
+      // Left to right, each clear of the one before, then all shifted to sit as near as they can to where they want to be.
+      band.forEach((b, i) => {
+        const left = shapes[i].box.x0 - b.want;
+        if (!i) xs.push(b.want);
+        else xs.push(Math.max(b.want, xs[i - 1] + (shapes[i - 1].box.x1 - band[i - 1].want) + ORG_LADDER_GAP - left));
+      });
+      const shift = band.reduce((s, b, i) => s + (b.want - xs[i]), 0) / Math.max(1, band.length);
+      band.forEach((b, i) => placed.push({ item: b.item, up, x: xs[i] + shift }));
+      if (band.length) span = Math.max(span, xs[xs.length - 1] - xs[0] + (shapes[shapes.length - 1].box.x1 - band[band.length - 1].want) - (shapes[0].box.x0 - band[0].want));
+    }
+    const next = Math.max(ORG_TARGET_MIN, span / Math.max(1, k));
+    if (Math.abs(next - spacing) < 1) break;
+    spacing = next;
+  }
+  const pos = new Map<string, Point>();
+  const labelSide: NonNullable<LinkLayout['labelSide']> = new Map();
+  const labelShift = new Map<string, number>();
+  g.order.forEach((t, i) => {
+    pos.set(t, { x: (index.get(t)! - (k - 1) / 2) * spacing, y: 0 });
+    labelSide.set(t, 'right');
+    labelShift.set(t, i % 2 ? 1 : -1);
+  });
+  const at = (t: string) => pos.get(t)!;
+  const bands: OrgBands = { row: 0, up: -ORG_LANE_IN, down: ORG_LANE_IN };
+  // Lay the ladders at a distance, count the lanes, then bring them in to suit.
+  const lay = (upAt: number, downAt: number) => {
+    const boxes: Box[] = [];
+    for (const p of placed) {
+      const probe = innerShape(p.item, { x: p.x, y: 0 }, step, at);
+      const dy = p.up ? upAt - probe.box.y1 : downAt - probe.box.y0;
+      const shape = innerShape(p.item, { x: p.x, y: dy }, step, at);
+      p.item.members.forEach((m, i) => {
+        pos.set(m, shape.spots[i]);
+        labelSide.set(m, 'bottom');
+      });
+      boxes.push(shape.box);
+    }
+    return boxes;
+  };
+  const bundles: Bundle[] = placed.map((p) => ({ targets: p.item.targets, members: p.item.members }));
+  lay(-4 * MIN_GAP, 4 * MIN_GAP);
+  const lanes = orgLaneCounts(net, pos, bundles, bands);
+  const boxes = lay(bands.up - Math.max(0, lanes.up - 1) * ORG_LANE_STEP - ORG_LANE_OUT, bands.down + Math.max(0, lanes.down - 1) * ORG_LANE_STEP + ORG_LANE_OUT);
+  const b = boundsOf(pos);
+  const bounds = { minX: b.minX - ORG_LABEL_ROOM, minY: b.minY - 40, maxX: b.maxX + LABEL_W, maxY: b.maxY + 20 };
+  for (const box of boxes) {
+    bounds.minX = Math.min(bounds.minX, box.x0);
+    bounds.maxX = Math.max(bounds.maxX, box.x1);
+    bounds.minY = Math.min(bounds.minY, box.y0);
+    bounds.maxY = Math.max(bounds.maxY, box.y1);
+  }
+  return { pos, bounds, labelSide, labelShift, bundles, orgBands: bands };
 }

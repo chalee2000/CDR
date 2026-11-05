@@ -1,7 +1,7 @@
 import type { EChartsCoreOption } from 'echarts/core';
 import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout, type Point } from '../lib/analysis/linkLayout';
 import { boxOf, chartFrame, unionBox, type Box } from '../lib/analysis/linkMove';
-import { routeBundles, routeOrg, routeStreets, routeTree } from '../lib/analysis/linkRoute';
+import { routeBundles, routeOrg, routeOrgLadders, routeStreets, routeTree } from '../lib/analysis/linkRoute';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -252,6 +252,8 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         show,
         position: layout.labelSide?.get(n.id) ?? 'bottom',
         distance: layout.labelLower?.has(n.id) ? (dense ? 16 : 19) : 4,
+        // A row of labels beside their icons, every other one a little higher and the rest lower, so neighbours do not run into each other.
+        ...(layout.labelShift?.has(n.id) ? { offset: [0, layout.labelShift.get(n.id)! * (name ? 17 : 12)] } : {}),
         formatter: name ? `{n|${labelText(name)}}\n{d|${labelText(n.id, 24)}}` : `{d|${labelText(n.id, 24)}}`,
         rich: {
           n: { fontSize: n.isTarget ? 12.5 : dense ? 10.5 : 11.5, fontWeight: 600, color: ch.ink, lineHeight: dense ? 13 : 15 },
@@ -271,6 +273,10 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
   const bundled = input.layoutMode === 'hub' && (!!layout.bundles?.length || !!layout.road);
   // Packed: links between discs along the streets between them, at right angles.
   const cabled = input.layoutMode === 'packed' && !!layout.streets;
+  // Organization with only shared contacts: ladders above and below the targets' row.
+  const orgLadders = input.layoutMode === 'organization' && !!layout.orgBands;
+  // Pieces of ladders, cables and streets: thicker trunks, counts beside the numbers.
+  const laddered = bundled || cabled || orgLadders;
   const routed = tree || bundled || cabled;
   const styleOf = (e: NetEdge) => {
     const key = edgeKey(e.source, e.target);
@@ -341,7 +347,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       ? routeBundles(net, at, layout.bundles ?? [], layout.targetCurves, layout.road)
       : cabled
         ? routeStreets(net, at, layout.homes ?? new Map(), layout.streets!)
-        : input.layoutMode === 'organization'
+        : orgLadders
+          ? routeOrgLadders(net, at, layout.bundles ?? [], layout.orgBands!)
+          : input.layoutMode === 'organization'
         ? routeOrg(net, at, layout.combs ?? new Map())
         : routeTree(net, at);
     const clamp = (v: number, lo = -Infinity, hi = Infinity) => Math.max(lo, Math.min(hi, v));
@@ -354,7 +362,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         // A trunk or bus shared by a target's links: thin, in the target's
         // colour (a bundle's trunk thicker the more numbers it carries).
         const colour = input.colorBy === 'community' ? ch.other : slotColor(byId.get(p.owner ?? '')?.slot ?? 99, mode);
-        const width = bundled || cabled ? Math.min(5, 1.6 + 0.9 * Math.log2(p.edges.length)) : 1.4;
+        const width = laddered ? Math.min(5, 1.6 + 0.9 * Math.log2(p.edges.length)) : 1.4;
         return {
           source: p.source,
           target: p.target,
@@ -375,9 +383,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       const to = at.get(p.target);
       const upright = drop && !!from && !!to && Math.abs(to.y - from.y) > Math.abs(to.x - from.x);
       // A bundle's stubs are short: smaller heads keep its ladder light.
-      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7) * ((bundled || cabled) && drop ? 0.75 : 1);
+      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7) * (laddered && drop ? 0.75 : 1);
       let place: object = upright ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {};
-      if ((bundled || cabled) && drop && from && to) {
+      if (laddered && drop && from && to) {
         // A bundle's short stub: the count stands upright just short of the
         // number, clear of its icon whichever way the stub runs.
         const len = Math.hypot(to.x - from.x, to.y - from.y) || 1;

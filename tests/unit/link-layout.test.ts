@@ -466,6 +466,47 @@ describe('packed, hierarchy and organization layouts', () => {
     expect(Math.max(...t0) - Math.min(...t0)).toBeLessThanOrEqual(5 * 92);
   });
 
+  it('organization with only shared contacts: targets in a row, ladders above and below it, clear of their lanes', () => {
+    const net = synthetic(6, 0, 3);
+    const add = (id: string, ts: number[]) => {
+      net.nodes.push(node(id));
+      ts.forEach((t, i) => net.edges.push(edge(`T${t}`, id, 3 + i)));
+    };
+    for (let i = 0; i < 4; i++) add(`G024:${i}`, [0, 2, 4]);
+    add('one', [1, 4]);
+    net.edges.push(edge('T0', 'T3', 5), edge('T1', 'T2', 2));
+    const l = organizationLayout(net);
+    expect(l.orgBands).toBeDefined();
+    expect(l.pos.size).toBe(net.nodes.length);
+    expect(organizationLayout(net)).toEqual(l);
+    const d = minDistances(net, l);
+    expect(d.contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+    expect(d.toTarget).toBeGreaterThanOrEqual(0.9 * TARGET_GAP);
+    for (let t = 0; t < 6; t++) expect(l.pos.get(`T${t}`)!.y).toBe(0);
+    // Every shared contact on a ladder: one column each, above or below the row, beyond its lanes.
+    const bands = l.orgBands!;
+    let [above, below] = [0, 0];
+    for (const n of net.nodes) if (!n.isTarget) expect(l.bundles!.filter((bd) => bd.members.includes(n.id))).toHaveLength(1);
+    for (const bd of l.bundles!) {
+      const ps = bd.members.map((m) => l.pos.get(m)!);
+      for (const p of ps) expect(p.x).toBeCloseTo(ps[0].x, 6);
+      if (ps[0].y < 0) {
+        above++;
+        for (const p of ps) expect(p.y).toBeLessThan(bands.up);
+      } else {
+        below++;
+        for (const p of ps) expect(p.y).toBeGreaterThan(bands.down);
+      }
+    }
+    expect(above).toBeGreaterThan(0);
+    expect(below).toBeGreaterThan(0);
+    // Neighbouring targets' names a line apart.
+    const row = ['T0', 'T1', 'T2', 'T3', 'T4', 'T5'].sort((p, q) => l.pos.get(p)!.x - l.pos.get(q)!.x);
+    for (let i = 0; i + 1 < row.length; i++) expect(l.labelShift!.get(row[i])).not.toBe(l.labelShift!.get(row[i + 1]));
+    // With own contacts, the org chart of spines as before.
+    expect(organizationLayout(synthetic(4, 6, 2)).orgBands).toBeUndefined();
+  });
+
   it('packed: discs in a table, with targets that share contacts next to each other', () => {
     const n9 = synthetic(9, 12, 2);
     const l = packedLayout(n9);
