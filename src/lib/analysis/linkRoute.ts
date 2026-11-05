@@ -558,3 +558,260 @@ export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bun
   }
   return { bends, pieces };
 }
+
+/** A cable into a disc ends this far beyond the disc's contacts that it serves. */
+const CABLE_GAP = 37;
+
+/**
+ * Packed: the table of discs, for links that run along the streets between
+ * them: the y of each row and x of each column (of disc centres), and of each
+ * street (above the first row, between rows, below the last; left of the
+ * first column, between columns, right of the last).
+ */
+export interface StreetGrid {
+  rows: number[];
+  cols: number[];
+  hStreets: number[];
+  vStreets: number[];
+}
+
+/** A link (or a target's links into another target's disc) along the streets, from one target to another. */
+export interface StreetRun {
+  key: string;
+  from: string;
+  to: string;
+}
+
+/** Lanes of a street lie this far apart. */
+export const STREET_STEP = 9;
+/** Lines leaving or entering a target stand this far apart. */
+const LEG_STEP = 8;
+
+const nearestIndex = (list: number[], v: number) => list.reduce((best, x, i) => (Math.abs(x - v) < Math.abs(list[best] - v) ? i : best), 0);
+
+/**
+ * The streets a run takes: out of its target straight up or down to the
+ * street on the side facing the other (for targets in the same row, the
+ * street on the outside of the table, or above a middle row), along it, and
+ * (for rows further apart) down the street between columns beside the first
+ * target to the street on the near side of the second, then along that.
+ */
+function streetsOf(run: StreetRun, at: (id: string) => Point, grid: StreetGrid): { h1: number; v?: number; h2: number } {
+  const [U, T] = [at(run.from), at(run.to)];
+  const [ru, rt] = [nearestIndex(grid.rows, U.y), nearestIndex(grid.rows, T.y)];
+  const last = grid.rows.length - 1;
+  if (ru === rt) {
+    const h = ru === last && last > 0 ? last + 1 : ru;
+    return { h1: h, h2: h };
+  }
+  const h1 = ru < rt ? ru + 1 : ru;
+  const h2 = ru < rt ? rt : rt + 1;
+  if (h1 === h2) return { h1, h2 };
+  const [cu, ct] = [nearestIndex(grid.cols, U.x), nearestIndex(grid.cols, T.x)];
+  const v = ct > cu ? cu + 1 : ct < cu ? cu : cu + 1 < grid.vStreets.length - 1 ? cu + 1 : cu;
+  return { h1, v, h2 };
+}
+
+/**
+ * Lanes for runs along the streets: on each street, runs that would lie
+ * along each other take different lanes. Returns each run's streets and
+ * lanes, and how many lanes each street has.
+ */
+export function planStreets(runs: StreetRun[], at: (id: string) => Point, grid: StreetGrid) {
+  const ways = new Map(runs.map((r) => [r.key, streetsOf(r, at, grid)]));
+  const along: { street: string; run: StreetRun; part: 'h1' | 'v' | 'h2'; lo: number; hi: number }[] = [];
+  for (const r of runs) {
+    const w = ways.get(r.key)!;
+    const [U, T] = [at(r.from), at(r.to)];
+    const vx = w.v !== undefined ? grid.vStreets[w.v] : T.x;
+    along.push({ street: `h${w.h1}`, run: r, part: 'h1', lo: Math.min(U.x, vx), hi: Math.max(U.x, vx) });
+    if (w.v !== undefined) {
+      const [y1, y2] = [grid.hStreets[w.h1], grid.hStreets[w.h2]];
+      along.push({ street: `v${w.v}`, run: r, part: 'v', lo: Math.min(y1, y2), hi: Math.max(y1, y2) });
+      along.push({ street: `h${w.h2}`, run: r, part: 'h2', lo: Math.min(vx, T.x), hi: Math.max(vx, T.x) });
+    }
+  }
+  const lanes = new Map<string, number>();
+  const counts = new Map<string, number>();
+  const byStreet = new Map<string, typeof along>();
+  for (const a of along) byStreet.set(a.street, [...(byStreet.get(a.street) ?? []), a]);
+  for (const [street, list] of byStreet) {
+    const level = levels(list, (a) => [a.lo, a.hi], (a, b) => a.run.key.localeCompare(b.run.key) || a.part.localeCompare(b.part));
+    for (const [a, l] of level) lanes.set(`${a.run.key}:${a.part}`, l);
+    counts.set(street, Math.max(...level.values()) + 1);
+  }
+  return { ways, lanes, counts };
+}
+
+/** The runs along the streets of a packed chart: each link between targets, and each target's links into another target's disc. */
+export function streetRuns(net: Network, homes: Map<string, string>): { runs: StreetRun[]; into: Map<string, NetEdge[]>; tt: Map<string, NetEdge>; straight: NetEdge[] } {
+  const isTarget = new Set(net.nodes.filter((n) => n.isTarget).map((n) => n.id));
+  const into = new Map<string, NetEdge[]>();
+  const tt = new Map<string, NetEdge>();
+  const straight: NetEdge[] = [];
+  const runs: StreetRun[] = [];
+  for (const e of net.edges) {
+    const [s, t] = [isTarget.has(e.source), isTarget.has(e.target)];
+    if (s && t) {
+      if (e.source === e.target) continue;
+      const key = pairKey(e.source, e.target);
+      tt.set(key, e);
+      runs.push({ key, from: e.source, to: e.target });
+      continue;
+    }
+    if (!s && !t) {
+      straight.push(e);
+      continue;
+    }
+    const [from, c] = s ? [e.source, e.target] : [e.target, e.source];
+    const home = homes.get(c);
+    if (!home || home === from) {
+      straight.push(e);
+      continue;
+    }
+    const key = `${from}>${home}`;
+    if (!into.has(key)) {
+      into.set(key, []);
+      runs.push({ key, from, to: home });
+    }
+    into.get(key)!.push(e);
+  }
+  runs.sort((p, q) => p.key.localeCompare(q.key));
+  return { runs, into, tt, straight };
+}
+
+/**
+ * Packed, tidy as a circuit board: links between targets, and a target's
+ * links into another target's disc (to the contacts that live there, see
+ * packedLayout), run along the streets between the discs on lanes of their
+ * own (see streetsOf), at right angles. A target's runs into other discs
+ * leave it together, up or down, as one cable; runs arrive at a disc side by
+ * side and end just outside it, where a cable parts to each contact (the
+ * short branch carries the link's count and arrows). Links between targets
+ * run whole, with their arrows at the targets. A contact's link to the target
+ * it lives with, and lone links, are straight. Worked out from where the
+ * numbers are, so it follows numbers moved by hand.
+ */
+export function routeStreets(net: Network, pos: Map<string, Point>, homes: Map<string, string>, grid: StreetGrid): Routes {
+  const bends = new Map<string, Point>();
+  const pieces: RoutePiece[] = [];
+  const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
+  const { runs, into, tt, straight } = streetRuns(net, homes);
+  for (const e of straight) pieces.push({ source: e.source, target: e.target, edges: [pairKey(e.source, e.target)], kind: 'edge', label: true, arrows: [e.ba > 0, e.ab > 0] });
+  const { ways, lanes, counts } = planStreets(runs, at, grid);
+  const laneAt = (street: 'h' | 'v', i: number, lane: number) => {
+    const base = street === 'h' ? grid.hStreets[i] : grid.vStreets[i];
+    return base + (lane - ((counts.get(`${street}${i}`) ?? 1) - 1) / 2) * STREET_STEP;
+  };
+  const yOf = (r: StreetRun) => laneAt('h', ways.get(r.key)!.h1, lanes.get(`${r.key}:h1`)!);
+  const yEnd = (r: StreetRun) => {
+    const w = ways.get(r.key)!;
+    return w.v !== undefined ? laneAt('h', w.h2, lanes.get(`${r.key}:h2`)!) : yOf(r);
+  };
+  const isTt = (r: StreetRun) => tt.has(r.key);
+  const side = (id: string, y: number) => (y < at(id).y ? -1 : 1);
+
+  // Where each run leaves its target: cables from one target on one side
+  // share its centre line; links between targets each have a line of their own.
+  const outX = new Map<string, number>();
+  const inX = new Map<string, number>();
+  const legs = (list: { r: StreetRun; y: number; toward: number }[], centre: number, own: boolean) => {
+    // Lines coming from the left take the left, those whose lane is further take the places nearer the centre.
+    const left = list.filter((l) => l.toward < centre).sort((p, q) => Math.abs(q.y) - Math.abs(p.y) || p.r.key.localeCompare(q.r.key));
+    const right = list.filter((l) => l.toward >= centre).sort((p, q) => Math.abs(q.y) - Math.abs(p.y) || p.r.key.localeCompare(q.r.key));
+    const out = new Map<string, number>();
+    left.forEach((l, i) => out.set(l.r.key, centre - (i + (own ? 1 : 0.5)) * LEG_STEP));
+    right.forEach((l, i) => out.set(l.r.key, centre + (i + (own ? 1 : 0.5)) * LEG_STEP));
+    return out;
+  };
+  const targets = [...new Set(runs.flatMap((r) => [r.from, r.to]))].sort();
+  for (const t of targets) {
+    const T = at(t);
+    for (const s of [-1, 1]) {
+      const leaving = runs.filter((r) => r.from === t && side(t, yOf(r)) === s);
+      const arriving = runs.filter((r) => r.to === t && side(t, yEnd(r)) === s);
+      const cables = leaving.filter((r) => !isTt(r));
+      for (const r of cables) outX.set(r.key, T.x);
+      const toward = (r: StreetRun, from: boolean) => {
+        const w = ways.get(r.key)!;
+        if (from) return w.v !== undefined ? grid.vStreets[w.v] : at(r.to).x;
+        return w.v !== undefined ? grid.vStreets[w.v] : at(r.from).x;
+      };
+      // Lines of their own: links between targets leaving, and everything arriving.
+      const own = [
+        ...leaving.filter(isTt).map((r) => ({ r, y: yOf(r) - T.y, toward: toward(r, true), dir: 'out' as const })),
+        ...arriving.map((r) => ({ r: { ...r, key: `${r.key}#in` }, y: yEnd(r) - T.y, toward: toward(r, false), dir: 'in' as const })),
+      ];
+      for (const [key, x] of legs(own, T.x, cables.length > 0)) {
+        if (key.endsWith('#in')) inX.set(key.slice(0, -3), x);
+        else outX.set(key, x);
+      }
+    }
+  }
+
+  // Cables leaving a target on one side: one line out, parting at each lane.
+  for (const t of targets) {
+    for (const s of [-1, 1]) {
+      const cables = runs.filter((r) => r.from === t && !isTt(r) && side(t, yOf(r)) === s).sort((p, q) => Math.abs(yOf(p) - at(t).y) - Math.abs(yOf(q) - at(t).y) || p.key.localeCompare(q.key));
+      let prev = t;
+      cables.forEach((r, i) => {
+        const id = `__street:${r.key}:out`;
+        bends.set(id, { x: at(t).x, y: yOf(r) });
+        pieces.push({ source: prev, target: id, edges: cables.slice(i).flatMap((c) => into.get(c.key)!.map((e) => pairKey(e.source, e.target))), kind: 'bus', owner: t });
+        prev = id;
+      });
+    }
+  }
+
+  for (const r of runs) {
+    const w = ways.get(r.key)!;
+    const T = at(r.to);
+    const xOut = outX.get(r.key)!;
+    const xIn = inX.get(r.key)!;
+    const y1 = yOf(r);
+    const y2 = yEnd(r);
+    const pts: Point[] = [];
+    pts.push({ x: xOut, y: y1 });
+    if (w.v !== undefined) {
+      const vx = laneAt('v', w.v, lanes.get(`${r.key}:v`)!);
+      pts.push({ x: vx, y: y1 }, { x: vx, y: y2 });
+    }
+    pts.push({ x: xIn, y: y2 });
+    const ids = pts.map((p, i) => {
+      const id = i === 0 && !isTt(r) ? `__street:${r.key}:out` : `__street:${r.key}:${i}`;
+      if (!bends.has(id)) bends.set(id, p);
+      return id;
+    });
+    if (isTt(r)) {
+      const e = tt.get(r.key)!;
+      // The whole link, from target to target, its count on the longest stretch.
+      const fromSource = e.source === r.from;
+      const path = [r.from, ...ids, r.to];
+      const where = (id: string) => bends.get(id) ?? at(id);
+      const len = (i: number) => Math.hypot(where(path[i + 1]).x - where(path[i]).x, where(path[i + 1]).y - where(path[i]).y);
+      let longest = 1;
+      for (let i = 1; i < path.length - 2; i++) if (len(i) > len(longest)) longest = i;
+      for (let i = 0; i + 1 < path.length; i++) {
+        const arrows: [boolean, boolean] = [i === 0 && (fromSource ? e.ba : e.ab) > 0, i === path.length - 2 && (fromSource ? e.ab : e.ba) > 0];
+        pieces.push({ source: path[i], target: path[i + 1], edges: [r.key], kind: 'edge', label: i === longest, arrows });
+      }
+      continue;
+    }
+    // A cable: along the streets, down to just outside the disc, then a branch to each contact.
+    const links = into.get(r.key)!;
+    const keys = links.map((e) => pairKey(e.source, e.target));
+    const contact = (e: NetEdge) => (e.source === r.from ? e.target : e.source);
+    const s = side(r.to, y2);
+    const reach = Math.max(...links.map((e) => (at(contact(e)).y - T.y) * s));
+    const endY = T.y + s * Math.max(reach + CABLE_GAP, 0.5 * Math.abs(y2 - T.y));
+    const end = `__street:${r.key}:end`;
+    bends.set(end, { x: xIn, y: Math.abs(endY - T.y) < Math.abs(y2 - T.y) ? endY : y2 });
+    const path = [...ids, end];
+    for (let i = 0; i + 1 < path.length; i++) pieces.push({ source: path[i], target: path[i + 1], edges: keys, kind: 'bus', owner: r.from });
+    for (const e of links) {
+      const fFirst = e.source === r.from;
+      pieces.push({ source: end, target: contact(e), edges: [pairKey(e.source, e.target)], kind: 'edge', owner: r.from, label: true, arrows: [(fFirst ? e.ba : e.ab) > 0, (fFirst ? e.ab : e.ba) > 0] });
+    }
+  }
+  return { bends, pieces };
+}

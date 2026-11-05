@@ -1,7 +1,7 @@
 import type { EChartsCoreOption } from 'echarts/core';
 import { MIN_GAP, pairKey, type LayoutKind, type LinkLayout, type Point } from '../lib/analysis/linkLayout';
 import { boxOf, chartFrame, unionBox, type Box } from '../lib/analysis/linkMove';
-import { routeBundles, routeOrg, routeTree } from '../lib/analysis/linkRoute';
+import { routeBundles, routeOrg, routeStreets, routeTree } from '../lib/analysis/linkRoute';
 import type { NetEdge, NetNode, Network } from '../lib/analysis/network';
 import { PEER_KIND_TH } from '../lib/labels';
 import { CHROME, slotColor, type ThemeMode } from '../lib/palette';
@@ -269,7 +269,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
   const tree = input.layoutMode === 'hierarchy' || input.layoutMode === 'organization';
   // Peacock with many targets: shared contacts on ladders, joined into cables and trunks, links between targets round the ring road.
   const bundled = input.layoutMode === 'hub' && (!!layout.bundles?.length || !!layout.road);
-  const routed = tree || bundled;
+  // Packed: links between discs along the streets between them, at right angles.
+  const cabled = input.layoutMode === 'packed' && !!layout.streets;
+  const routed = tree || bundled || cabled;
   const styleOf = (e: NetEdge) => {
     const key = edgeKey(e.source, e.target);
     const tt = targetIds.has(e.source) && targetIds.has(e.target);
@@ -337,7 +339,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     const at = new Map(net.nodes.map((n) => [n.id, (fixed && input.moved?.get(n.id)) || layout.pos.get(n.id) || { x: 0, y: 0 }]));
     const routes = bundled
       ? routeBundles(net, at, layout.bundles ?? [], layout.targetCurves, layout.road)
-      : input.layoutMode === 'organization'
+      : cabled
+        ? routeStreets(net, at, layout.homes ?? new Map(), layout.streets!)
+        : input.layoutMode === 'organization'
         ? routeOrg(net, at, layout.combs ?? new Map())
         : routeTree(net, at);
     const clamp = (v: number, lo = -Infinity, hi = Infinity) => Math.max(lo, Math.min(hi, v));
@@ -350,7 +354,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
         // A trunk or bus shared by a target's links: thin, in the target's
         // colour (a bundle's trunk thicker the more numbers it carries).
         const colour = input.colorBy === 'community' ? ch.other : slotColor(byId.get(p.owner ?? '')?.slot ?? 99, mode);
-        const width = bundled ? Math.min(5, 1.6 + 0.9 * Math.log2(p.edges.length)) : 1.4;
+        const width = bundled || cabled ? Math.min(5, 1.6 + 0.9 * Math.log2(p.edges.length)) : 1.4;
         return {
           source: p.source,
           target: p.target,
@@ -371,9 +375,9 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
       const to = at.get(p.target);
       const upright = drop && !!from && !!to && Math.abs(to.y - from.y) > Math.abs(to.x - from.x);
       // A bundle's stubs are short: smaller heads keep its ladder light.
-      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7) * (bundled && drop ? 0.75 : 1);
+      const arrowSize = Math.min(10, 5 + st.width) * Math.max(nodeScale, 0.7) * ((bundled || cabled) && drop ? 0.75 : 1);
       let place: object = upright ? { position: 'end', distance: -24 - 17 * (p.stack ?? 0) } : {};
-      if (bundled && drop && from && to) {
+      if ((bundled || cabled) && drop && from && to) {
         // A bundle's short stub: the count stands upright just short of the
         // number, clear of its icon whichever way the stub runs.
         const len = Math.hypot(to.x - from.x, to.y - from.y) || 1;

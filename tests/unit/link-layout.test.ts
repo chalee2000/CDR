@@ -485,46 +485,54 @@ describe('packed, hierarchy and organization layouts', () => {
     expect(close).toBeGreaterThanOrEqual(8);
   });
 
-  it('packed: a shared contact lives with the target it talks to most, on the side facing the other', () => {
+  it('packed: a shared contact lives with the target it talks to most, on the side its other target\'s lines come in from', () => {
     const n9 = synthetic(9, 12, 2);
     const l = packedLayout(n9);
+    const rowsY = [...new Set(n9.nodes.filter((n) => n.isTarget).map((n) => Math.round(l.pos.get(n.id)!.y)))].sort((a, b) => a - b);
     for (const n of n9.nodes) {
       if (!n.id.startsWith('S')) continue;
       const t = Number(n.id.slice(1, n.id.indexOf('-')));
       const home = `T${t}`;
       const other = `T${(t + 1) % 9}`;
       expect(nearestTarget(n9, l, n.id)).toBe(home);
-      const p = l.pos.get(n.id)!;
-      const h = l.pos.get(home)!;
-      const o = l.pos.get(other)!;
-      expect((p.x - h.x) * (o.x - h.x) + (p.y - h.y) * (o.y - h.y)).toBeGreaterThan(0);
+      const [p, h, o] = [l.pos.get(n.id)!, l.pos.get(home)!, l.pos.get(other)!];
+      // Lines from another row come in from that side; from the same row, round the outside of the table.
+      const facing = Math.round(o.y) !== Math.round(h.y) ? Math.sign(o.y - h.y) : Math.round(h.y) === rowsY[rowsY.length - 1] && rowsY.length > 1 ? 1 : -1;
+      expect(Math.sign(p.y - h.y)).toBe(facing);
     }
   });
 
-  it('packed: a clear corridor for the line between two targets, room under each target for its name, labels pointing out', () => {
+  it('packed: streets between the discs, wide enough for their lanes, room under each target for its name, labels pointing out', () => {
     const net = synthetic(4, 20);
-    net.edges.push(edge('T0', 'T1', 9));
+    net.edges.push(edge('T0', 'T1', 9), edge('T2', 'T3', 4));
     const l = packedLayout(net);
-    const a = l.pos.get('T0')!;
-    const b = l.pos.get('T1')!;
-    const near = (p: { x: number; y: number }) => {
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
-      return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-    };
-    for (const n of net.nodes) if (!n.isTarget) expect(near(l.pos.get(n.id)!)).toBeGreaterThan(0.8 * MIN_GAP);
+    expect(l.streets).toBeDefined();
+    const g = l.streets!;
+    // Streets lie between the rows and columns of discs, and outside them.
+    for (let i = 0; i + 1 < g.rows.length; i++) expect(g.hStreets[i + 1] > g.rows[i] && g.hStreets[i + 1] < g.rows[i + 1]).toBe(true);
+    expect(g.hStreets[0]).toBeLessThan(g.rows[0]);
+    expect(g.hStreets[g.hStreets.length - 1]).toBeGreaterThan(g.rows[g.rows.length - 1]);
+    const partner: Record<string, string> = { T0: 'T1', T1: 'T0', T2: 'T3', T3: 'T2' };
+    const rowsY = [...new Set(['T0', 'T1', 'T2', 'T3'].map((t) => Math.round(l.pos.get(t)!.y)))].sort((a, b) => a - b);
     for (const n of net.nodes) {
       if (n.isTarget) continue;
-      const home = l.pos.get(n.id.slice(0, 2))!;
+      const t = n.id.slice(0, 2);
+      const home = l.pos.get(t)!;
+      const o = l.pos.get(partner[t])!;
       const p = l.pos.get(n.id)!;
       const d = Math.hypot(p.x - home.x, p.y - home.y);
       const cx = (p.x - home.x) / d;
       const cy = (p.y - home.y) / d;
-      // Nothing on the first ring straight under the target.
-      if (d < 100 + MIN_GAP / 2) expect(Math.abs(Math.atan2(cy, cx) - Math.PI / 2)).toBeGreaterThanOrEqual(Math.PI / 4.5 - 1e-9);
+      // Nothing on the first ring where the target's name goes (under it, or over it when its lines come from below), nor in the way of its line to its partner.
+      const name = l.labelSide?.get(t) === 'top' ? -Math.PI / 2 : Math.PI / 2;
+      if (d < 100 + MIN_GAP / 2) expect(Math.abs(Math.atan2(cy, cx) - name)).toBeGreaterThanOrEqual(Math.PI / 4.5 - 1e-9);
+      const facing = Math.round(o.y) !== Math.round(home.y) ? Math.sign(o.y - home.y) : Math.round(home.y) === rowsY[rowsY.length - 1] && rowsY.length > 1 ? 1 : -1;
+      if (Math.sign(p.y - home.y) === facing) expect(Math.abs(p.x - home.x)).toBeGreaterThan(0.3 * MIN_GAP);
       expect(l.labelSide?.get(n.id)).toBe(cx > 0.25 ? 'right' : cx < -0.25 ? 'left' : cy > 0 ? 'bottom' : 'top');
     }
+    // The table is drawn whole, its outer streets too.
+    expect(l.bounds.minY).toBeLessThan(g.hStreets[0]);
+    expect(l.bounds.maxY).toBeGreaterThan(g.hStreets[g.hStreets.length - 1]);
   });
 
   it('packed: own contacts closest to their target, and tighter than peacock', () => {

@@ -1,4 +1,4 @@
-import { JOIN_STEP, LANE_STEP, ladderSides, roadPlan, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, type Bundle, type Comb, type Road } from './linkRoute';
+import { JOIN_STEP, LANE_STEP, ladderSides, planStreets, roadPlan, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, STREET_STEP, streetRuns, type Bundle, type Comb, type Road, type StreetGrid } from './linkRoute';
 import type { Network } from './network';
 
 /**
@@ -31,6 +31,10 @@ export interface LinkLayout {
   bundles?: Bundle[];
   /** The ring road that links between targets which are not neighbours follow round the outside. */
   road?: Road;
+  /** Packed: the target in whose disc each shared contact lives. */
+  homes?: Map<string, string>;
+  /** Packed: the streets between the discs that links between them run along. */
+  streets?: StreetGrid;
 }
 
 /** The ways a link chart can be laid out (force is computed by the chart itself). */
@@ -199,7 +203,7 @@ export function hubLayout(net: Network): LinkLayout {
       const spilled = plan.reduce((n, l) => n + l.members.length - l.spots.length, 0);
       const items = innerItems(leftOver(shared, plan), total, links);
       const taken = plan.flatMap((l) => (l.box ? [l.box] : []));
-      return { innerFit: placeInner(items, at, ends, around, links, bb, taken), laddersFit: !spilled, items };
+      return { innerFit: placeInner(items, at, links, ellipseRoom(around, at, ends, bb), taken), laddersFit: !spilled, items };
     };
     // A first guess from the room the inside needs (packed loosely).
     const need = room(b).items.reduce((s, it) => {
@@ -259,7 +263,8 @@ export function hubLayout(net: Network): LinkLayout {
     placeBridges(plan, pos, sides, (bundles ??= []));
     // The other shared contacts inside: ladders of those sharing the same targets, and single contacts.
     const taken = plan.flatMap((l) => (l.box ? [l.box] : []));
-    placeInner(innerItems(leftOver(shared, plan), total, links), (t) => hub.get(t)!, ends, around, links, innerB, taken, { pos, labelSide: sides, bundles });
+    const at = (t: string) => hub.get(t)!;
+    placeInner(innerItems(leftOver(shared, plan), total, links), at, links, ellipseRoom(around, at, ends, innerB), taken, { pos, labelSide: sides, bundles });
     // Neighbours' links bow out round the rim, clear of the bridge between
     // them; links across the chart stay straight.
     const place = new Map(around.map((t, i) => [t, i]));
@@ -749,12 +754,40 @@ function boxGrid() {
   };
 }
 
-/** Offsets in order of distance out to r, SEARCH_STEP apart (ties broken the same way every time). */
+/**
+ * Offsets in order of distance out to r, SEARCH_STEP apart (coarser for a
+ * big search, so it stays quick), ties broken the same way every time.
+ */
 function searchOffsets(r: number): Point[] {
-  const n = Math.ceil(r / SEARCH_STEP);
+  const step = Math.max(SEARCH_STEP, r / 90);
+  const n = Math.ceil(r / step);
   const out: Point[] = [];
-  for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) if (i * i + j * j <= n * n) out.push({ x: i * SEARCH_STEP, y: j * SEARCH_STEP });
+  for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) if (i * i + j * j <= n * n) out.push({ x: i * step, y: j * step });
   return out.sort((p, q) => p.x * p.x + p.y * p.y - (q.x * q.x + q.y * q.y) || p.y - q.y || p.x - q.x);
+}
+
+/** Where ladders and single contacts may go: clear of `fixed` boxes and of `fans`, `inside` the room, near where their targets pull them. */
+interface InnerRoom {
+  fixed: Box[];
+  fans: BridgeEnd[];
+  inside: (box: Box) => boolean;
+  /** Things go `pull` of the way from `middle` to their targets' weighted middle. */
+  middle: Point;
+  pull: number;
+  /** How far to look for room. */
+  reach: number;
+}
+
+/** The inside of the targets' ellipse (half height b), clear of the targets, their labels and fans. */
+function ellipseRoom(targets: string[], at: (id: string) => Point, endOf: (t: string) => BridgeEnd, b: number): InnerRoom {
+  return {
+    fixed: targets.flatMap((t) => targetBoxes(at(t), endOf(t).side)),
+    fans: targets.map(endOf),
+    inside: (box) => [box.x0, box.x1].every((x) => [box.y0, box.y1].every((y) => Math.hypot(x / (ELLIPSE * b), y / b) <= INNER_LIMIT)),
+    middle: { x: 0, y: 0 },
+    pull: INNER_PULL,
+    reach: 1.8 * b,
+  };
 }
 
 /**
@@ -769,21 +802,15 @@ function searchOffsets(r: number): Point[] {
 function placeInner(
   items: InnerItem[],
   at: (id: string) => Point,
-  endOf: (t: string) => BridgeEnd,
-  targets: string[],
   links: Map<string, Map<string, number>>,
-  b: number,
+  room: InnerRoom,
   taken: Box[],
-  out?: { pos: Map<string, Point>; labelSide: NonNullable<LinkLayout['labelSide']>; bundles: Bundle[] },
+  out?: { pos: Map<string, Point>; labelSide: NonNullable<LinkLayout['labelSide']>; bundles: Bundle[]; boxes?: Box[] },
 ): boolean {
   const grid = boxGrid();
   for (const box of taken) grid.add(box);
-  const fixed = targets.flatMap((t) => targetBoxes(at(t), endOf(t).side));
-  const ends = targets.map(endOf);
-  const offsets = searchOffsets(1.8 * b);
-  const inside = (box: Box) =>
-    [box.x0, box.x1].every((x) => [box.y0, box.y1].every((y) => Math.hypot(x / (ELLIPSE * b), y / b) <= INNER_LIMIT));
-  const fits = (box: Box) => inside(box) && !grid.hits(box) && !fixed.some((f) => overlaps(f, box)) && !ends.some((e) => inFan(box, e));
+  const offsets = searchOffsets(room.reach);
+  const fits = (box: Box) => room.inside(box) && !grid.hits(box) && !room.fixed.some((f) => overlaps(f, box)) && !room.fans.some((e) => inFan(box, e));
   const wantAt = (item: InnerItem): Point => {
     let [x, y, w] = [0, 0, 0];
     for (const t of item.targets) {
@@ -792,7 +819,7 @@ function placeInner(
       y += weight * at(t).y;
       w += weight;
     }
-    return { x: (INNER_PULL * x) / w, y: (INNER_PULL * y) / w };
+    return { x: room.middle.x + (room.pull * (x / w - room.middle.x)), y: room.middle.y + room.pull * (y / w - room.middle.y) };
   };
   const find = (item: InnerItem, steps: number[]) => {
     const want = wantAt(item);
@@ -807,6 +834,7 @@ function placeInner(
   const put = (item: InnerItem, shape: { spots: Point[]; box: Box }) => {
     grid.add(pad(shape.box, INNER_CLEAR));
     if (!out) return;
+    out.boxes?.push(shape.box);
     item.members.forEach((m, i) => {
       out.pos.set(m, shape.spots[i]);
       out.labelSide.set(m, 'bottom');
@@ -957,6 +985,8 @@ const MAX_CORRIDORS = 1 / 3;
 const NAME_SPOT = Math.PI / 4.5;
 /** Room beside a packed chart for the labels of its outermost contacts. */
 const LABEL_ROOM = 70;
+/** Room either side of a street's lanes. */
+const STREET_PAD = 0.6 * MIN_GAP;
 
 /**
  * Packed: each target is a disc of tidy rings, its strongest contacts on the
@@ -1084,27 +1114,57 @@ export function packedLayout(net: Network): LinkLayout {
   const usedRows = [...new Set([...cellOf.values()].map((c) => Math.floor(c / cols)))].sort((a, b) => a - b);
   const colW = usedCols.map((c) => Math.max(...targets.filter((t) => cellOf.get(t)! % cols === c).map((t) => 2 * radius.get(t)!)));
   const rowH = usedRows.map((r) => Math.max(...targets.filter((t) => Math.floor(cellOf.get(t)! / cols) === r).map((t) => 2 * radius.get(t)!)));
-  const offsets = (sizes: number[]) => {
+  // Links between discs run along the streets between rows and columns (see
+  // routeStreets): each street as wide as its lanes need. Lay the table out
+  // once with plain gaps, count the lanes, then widen the streets.
+  const rowIx = (t: string) => usedRows.indexOf(Math.floor(cellOf.get(t)! / cols));
+  const colIx = (t: string) => usedCols.indexOf(cellOf.get(t)! % cols);
+  const offsets = (sizes: number[], gaps: number[]) => {
     const out: number[] = [];
-    let at = 0;
-    for (const s of sizes) {
+    let at = gaps[0];
+    sizes.forEach((s, i) => {
       out.push(at + s / 2);
-      at += s + COL_W;
-    }
+      at += s + gaps[i + 1];
+    });
     return out;
   };
-  const xs = offsets(colW);
-  const ys = offsets(rowH);
-  const centre = new Map(targets.map((t) => [t, { x: xs[usedCols.indexOf(cellOf.get(t)! % cols)], y: ys[usedRows.indexOf(Math.floor(cellOf.get(t)! / cols))] }]));
+  const streetsOf = (xs: number[], ys: number[], gx: number[], gy: number[]): StreetGrid => ({
+    rows: ys,
+    cols: xs,
+    hStreets: [...ys.map((y, i) => y - rowH[i] / 2 - gy[i] / 2), ys[ys.length - 1] + rowH[ys.length - 1] / 2 + gy[ys.length] / 2],
+    vStreets: [...xs.map((x, i) => x - colW[i] / 2 - gx[i] / 2), xs[xs.length - 1] + colW[xs.length - 1] / 2 + gx[xs.length] / 2],
+  });
+  const homes = new Map([...homed].flatMap(([t, ids]) => ids.map((id) => [id, t] as const)));
+  const { runs } = streetRuns(net, homes);
+  let gx = Array.from({ length: colW.length + 1 }, () => COL_W);
+  let gy = Array.from({ length: rowH.length + 1 }, () => COL_W);
+  const placeAt = () => {
+    const xs = offsets(colW, gx);
+    const ys = offsets(rowH, gy);
+    return { grid: streetsOf(xs, ys, gx, gy), centre: new Map(targets.map((t) => [t, { x: xs[colIx(t)], y: ys[rowIx(t)] }])) };
+  };
+  if (runs.length) {
+    const first = placeAt();
+    const { counts } = planStreets(runs, (t) => first.centre.get(t)!, first.grid);
+    const room = (n: number) => Math.max(COL_W, (n - 1) * STREET_STEP + 2 * STREET_PAD);
+    gx = gx.map((_, i) => room(counts.get(`v${i}`) ?? 0));
+    gy = gy.map((_, i) => room(counts.get(`h${i}`) ?? 0));
+  }
+  const { grid, centre } = placeAt();
   for (const [t, c] of centre) pos.set(t, { ...c });
+  // Which way a target's lines to another leave it: towards the street between them.
+  const last = usedRows.length - 1;
+  const facing = (t: string, u: string) => (rowIx(t) < rowIx(u) ? 1 : rowIx(t) > rowIx(u) ? -1 : rowIx(t) === last && last > 0 ? 1 : -1);
+  // A target's name goes on the side fewer of its lines use (under it, unless most come from below).
+  const nameUp = new Set(targets.filter((t) => partners.get(t)!.reduce((sum, u) => sum + facing(t, u) * tie.get(pairKey(t, u))!, 0) > 0));
+  for (const t of nameUp) labelSide.set(t, 'top');
 
   // Fill each disc's rings, inner first; shared contacts take the outer slots
   // facing their other targets, the rest spread evenly.
-  const angleTo = (a: Point, b: Point) => Math.atan2(b.y - a.y, b.x - a.x);
   const gap = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
   for (const t of targets) {
     const c = centre.get(t)!;
-    const towards = partners.get(t)!.flatMap((u) => Array.from({ length: corridorWidth(t, u) }, () => angleTo(c, centre.get(u)!)));
+    const towards = partners.get(t)!.flatMap((u) => Array.from({ length: corridorWidth(t, u) }, () => (facing(t, u) * Math.PI) / 2));
     // Spokes line up with the strongest neighbour, so its corridor is straight.
     const base = towards[0] ?? -Math.PI / 2;
     // Contacts that show their label (shared elsewhere) go after the rest, so
@@ -1126,7 +1186,7 @@ export function packedLayout(net: Network): LinkLayout {
         free.delete(bestJ);
       };
       for (const a of towards.slice(0, corridorsOn(r, t))) keep(a);
-      if (r === 0) for (const j of [...free]) if (gap(slotAngle(j), Math.PI / 2) < NAME_SPOT) free.delete(j);
+      if (r === 0) for (const j of [...free]) if (gap(slotAngle(j), nameUp.has(t) ? -Math.PI / 2 : Math.PI / 2) < NAME_SPOT) free.delete(j);
       rings.push(free);
       left -= free.size;
     }
@@ -1155,11 +1215,8 @@ export function packedLayout(net: Network): LinkLayout {
       for (const id of ring.filter((x) => shared.has(x))) {
         let vx = 0;
         let vy = 0;
-        for (const [u, w] of others.get(id) ?? []) {
-          const a = angleTo(c, centre.get(u)!);
-          vx += w * Math.cos(a);
-          vy += w * Math.sin(a);
-        }
+        // Towards the street its other targets' lines come in from.
+        for (const [u, w] of others.get(id) ?? []) vy += w * facing(t, u);
         const want = Math.atan2(vy, vx);
         let bestJ = -1;
         for (const j of free) if (bestJ < 0 || gap(slotAngle(j), want) < gap(slotAngle(bestJ), want)) bestJ = j;
@@ -1178,7 +1235,16 @@ export function packedLayout(net: Network): LinkLayout {
   separate(pos, g.targetIds);
   // Labels point out of the discs: leave room for those on the outer edges.
   const b = boundsOf(pos);
-  return { pos, bounds: { minX: b.minX - LABEL_ROOM, minY: b.minY - 18, maxX: b.maxX + LABEL_ROOM, maxY: b.maxY + 18 }, labelSide, straightTargetLinks: true };
+  // Room for the outer streets too.
+  const bounds = { minX: b.minX - LABEL_ROOM, minY: b.minY - 18, maxX: b.maxX + LABEL_ROOM, maxY: b.maxY + 18 };
+  if (runs.length) {
+    // (A street's gap holds its lanes with room either side.)
+    bounds.minY = Math.min(bounds.minY, grid.hStreets[0] - gy[0] / 2);
+    bounds.maxY = Math.max(bounds.maxY, grid.hStreets[grid.hStreets.length - 1] + gy[gy.length - 1] / 2);
+    bounds.minX = Math.min(bounds.minX, grid.vStreets[0] - gx[0] / 2);
+    bounds.maxX = Math.max(bounds.maxX, grid.vStreets[grid.vStreets.length - 1] + gx[gx.length - 1] / 2);
+  }
+  return { pos, bounds, labelSide, straightTargetLinks: true, ...(runs.length ? { streets: grid, homes } : {}) };
 }
 
 /** Columns of a contact block under each target, chosen so the whole chart is about 16:9. */

@@ -4,8 +4,8 @@ import { parseWorkbook } from '../../src/lib/parsers';
 import { generateSamples } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
-import { hierarchyLayout, hubLayout, organizationLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
-import { DROP_STEP, roadPlan, routeBundles, routeOrg, routeTree, STUB_SPREAD, type Routes } from '../../src/lib/analysis/linkRoute';
+import { hierarchyLayout, hubLayout, organizationLayout, packedLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
+import { DROP_STEP, roadPlan, routeBundles, routeOrg, routeStreets, routeTree, STUB_SPREAD, type Routes } from '../../src/lib/analysis/linkRoute';
 
 const COL_W = 92;
 
@@ -485,4 +485,67 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
     const routes = routeBundles(six, moved, layout.bundles!, layout.targetCurves);
     for (const p of routes.pieces.filter((q) => q.target === m)) expect(where(routes, moved, p.source).y).toBeCloseTo(moved.get(m)!.y, 6);
   });
+});
+
+describe('packed: links between discs along the streets', () => {
+  const tangled = (() => {
+    const n = synthetic(10, 3, 2);
+    const add = (id: string, ts: number[]) => {
+      n.nodes.push(node(id));
+      ts.forEach((t, i) => n.edges.push(edge(`T${t}`, id, 3 - (i % 2), i % 2)));
+    };
+    add('A', [0, 5, 7]);
+    add('B', [2, 8]);
+    add('C', [1, 4, 9]);
+    add('D', [3, 6]);
+    n.edges.push(edge('T0', 'T5', 9, 2), edge('T2', 'T7', 4), edge('T1', 'T3', 3, 1), edge('T4', 'T8', 2));
+    return n;
+  })();
+  for (const [name, net] of [
+    ['shared contacts only', synthetic(6, 0, 3)],
+    ['own contacts too, and links every which way', tangled],
+  ] as const) {
+    it(`${name}: square corners, every link joined up, one count each, lanes apart`, () => {
+      const layout = packedLayout(net);
+      const { pos } = layout;
+      const routes = routeStreets(net, pos, layout.homes ?? new Map(), layout.streets!);
+      const real = new Set(net.nodes.map((n) => n.id));
+      const bad: string[] = [];
+      const level: { y: number; lo: number; hi: number; key: string }[] = [];
+      for (const p of routes.pieces) {
+        if (real.has(p.source) || real.has(p.target)) continue;
+        const [a, b] = [where(routes, pos, p.source), where(routes, pos, p.target)];
+        const [dx, dy] = [Math.abs(a.x - b.x), Math.abs(a.y - b.y)];
+        if (Math.min(dx, dy) >= 0.2) bad.push(`slanted ${p.source} ${p.target}`);
+        if (dy < 0.2 && dx > 1) level.push({ y: a.y, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x), key: p.edges.join() });
+      }
+      expect(bad).toEqual([]);
+      // Two runs along a street never lie on top of each other.
+      for (let i = 0; i < level.length; i++) {
+        for (let j = i + 1; j < level.length; j++) {
+          const [p, q] = [level[i], level[j]];
+          if (p.key === q.key || Math.abs(p.y - q.y) > 0.1) continue;
+          expect(Math.min(p.hi, q.hi) - Math.max(p.lo, q.lo)).toBeLessThan(1);
+        }
+      }
+      const byKey = new Map<string, typeof routes.pieces>();
+      for (const p of routes.pieces) for (const k of p.edges) byKey.set(k, [...(byKey.get(k) ?? []), p]);
+      for (const e of net.edges) {
+        const key = pairKey(e.source, e.target);
+        const adj = new Map<string, string[]>();
+        for (const p of byKey.get(key) ?? []) {
+          adj.set(p.source, [...(adj.get(p.source) ?? []), p.target]);
+          adj.set(p.target, [...(adj.get(p.target) ?? []), p.source]);
+        }
+        const seen = new Set([e.source]);
+        const queue = [e.source];
+        while (queue.length) for (const v of adj.get(queue.shift()!) ?? []) if (!seen.has(v)) seen.add(v), queue.push(v);
+        expect(seen.has(e.target), key).toBe(true);
+        expect((byKey.get(key) ?? []).filter((p) => p.edges.length === 1 && p.label)).toHaveLength(1);
+      }
+      // Every bend inside the chart's bounds.
+      for (const p of routes.bends.values()) expect(p.x >= layout.bounds.minX - 1 && p.x <= layout.bounds.maxX + 1 && p.y >= layout.bounds.minY - 1 && p.y <= layout.bounds.maxY + 1).toBe(true);
+      expect(routeStreets(net, pos, layout.homes ?? new Map(), layout.streets!)).toEqual(routes);
+    });
+  }
 });
