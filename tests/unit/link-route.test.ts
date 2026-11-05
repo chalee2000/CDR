@@ -5,7 +5,7 @@ import { generateSamples } from '../../src/lib/samples/generate';
 import { DEFAULT_SETTINGS } from '../../src/lib/types';
 import { buildNetwork, DEFAULT_NETWORK_OPTIONS, type NetEdge, type NetNode, type Network } from '../../src/lib/analysis/network';
 import { hierarchyLayout, hubLayout, organizationLayout, pairKey, type Point } from '../../src/lib/analysis/linkLayout';
-import { DROP_STEP, routeBundles, routeOrg, routeTree, STUB_SPREAD, type Routes } from '../../src/lib/analysis/linkRoute';
+import { DROP_STEP, roadPlan, routeBundles, routeOrg, routeTree, STUB_SPREAD, type Routes } from '../../src/lib/analysis/linkRoute';
 
 const COL_W = 92;
 
@@ -319,26 +319,35 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
     n.edges.push(edge('T0', 'T1', 9, 4), edge('T2', 'T6', 4));
     return n;
   })();
+  // Only shared contacts (no fans), and targets far apart calling each other.
+  const calling = (() => {
+    const n = synthetic(7, 0, 3);
+    n.edges.push(edge('T0', 'T3', 12, 5), edge('T1', 'T4', 7), edge('T2', 'T5', 3, 1), edge('T0', 'T4', 2), edge('T6', 'T2', 4));
+    return n;
+  })();
   for (const [name, net] of [
     ['six targets', six],
     ['ten targets', synthetic(10, 40, 3)],
     ['shared contacts only', synthetic(5, 0, 8)],
     ['contacts shared every which way', tangled],
+    ['targets far apart calling each other', calling],
   ] as const) {
     it(`${name}: level stubs off upright spines, every link joined up, counts on the stubs`, () => {
       const layout = hubLayout(net);
       const { pos } = layout;
-      const routes = routeBundles(net, pos, layout.bundles!, layout.targetCurves);
+      const routes = routeBundles(net, pos, layout.bundles ?? [], layout.targetCurves, layout.road);
       const real = new Set(net.nodes.map((n) => n.id));
       const bad: string[] = [];
       let nearest = Infinity;
       for (const p of routes.pieces) {
+        // Ladders only: spines and stubs.
+        if (!p.source.startsWith('__bundle:')) continue;
         const a = where(routes, pos, p.source);
         const b = where(routes, pos, p.target);
         const [dx, dy] = [Math.abs(a.x - b.x), Math.abs(a.y - b.y)];
-        if (!real.has(p.source) && !real.has(p.target)) {
+        if (p.target.startsWith('__bundle:')) {
           if (dx >= 0.2) bad.push(`spine not upright ${p.source} ${p.target}`);
-        } else if (!real.has(p.source) && real.has(p.target)) {
+        } else if (real.has(p.target)) {
           // Level, or nearly: stubs from spines on the same side run a little apart.
           if (dy >= 3 * STUB_SPREAD + 0.2) bad.push(`stub not level ${p.source} ${p.target}`);
         } else continue;
@@ -364,9 +373,9 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
         expect(labelled).toHaveLength(1);
         // Arrows follow the calls: from the target to the contact here.
         const [piece] = labelled;
-        if (!real.has(piece.source)) expect(piece.arrows).toEqual([e.ba > 0, e.ab > 0]);
+        if (piece.source.startsWith('__bundle:') || piece.source.startsWith('__split:')) expect(piece.arrows).toEqual([e.ba > 0, e.ab > 0]);
       }
-      layout.bundles!.forEach((bd, i) => {
+      (layout.bundles ?? []).forEach((bd, i) => {
         const join = (t: string) => routes.bends.get(`__bundle:${i}:${t}`)!;
         const colX = pos.get(bd.members[0])!.x;
         // Spines stand either side of the column, targets further left on the left.
@@ -382,7 +391,9 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
           return [Math.min(...ends.map((e) => e.y)), Math.max(...ends.map((e) => e.y)), join(t).x] as const;
         };
         for (const t of bd.targets) {
-          const [a, b] = [pos.get(t)!, join(t)];
+          // The trunk comes from the target, or from where the target's cable parts.
+          const trunk = routes.pieces.find((p) => p.target === `__bundle:${i}:${t}`)!;
+          const [a, b] = [where(routes, pos, trunk.source), join(t)];
           for (const o of bd.targets) {
             if (o === t) continue;
             const [y0, y1, x] = spine(o);
@@ -392,13 +403,74 @@ describe('peacock: shared contacts of neighbouring targets on ladders', () => {
           }
         }
       });
-      expect(routeBundles(net, pos, layout.bundles!, layout.targetCurves)).toEqual(routes);
+      expect(routeBundles(net, pos, layout.bundles ?? [], layout.targetCurves, layout.road)).toEqual(routes);
     });
   }
 
+  it("parts a target's links into the chart from one cable a little way in", () => {
+    const layout = hubLayout(tangled);
+    const { pos } = layout;
+    const routes = routeBundles(tangled, pos, layout.bundles!, layout.targetCurves, layout.road);
+    const b = Math.max(...tangled.nodes.filter((n) => n.isTarget).map((n) => Math.abs(pos.get(n.id)!.y)));
+    const splits = [...routes.bends.keys()].filter((id) => id.startsWith('__split:'));
+    expect(splits.length).toBeGreaterThan(0);
+    for (const split of splits) {
+      const t = split.slice('__split:'.length);
+      const S = routes.bends.get(split)!;
+      const T = pos.get(t)!;
+      // One cable from the target, carrying every link that parts from it.
+      const cable = routes.pieces.filter((p) => p.target === split);
+      expect(cable).toHaveLength(1);
+      expect(cable[0].source).toBe(t);
+      expect(cable[0].kind).toBe('bus');
+      const parts = routes.pieces.filter((p) => p.source === split);
+      expect(parts.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(cable[0].edges)).toEqual(new Set(parts.flatMap((p) => p.edges)));
+      const d = Math.hypot(S.x - T.x, S.y - T.y);
+      expect(d).toBeGreaterThanOrEqual(74);
+      expect(d).toBeLessThanOrEqual(251);
+      expect(Math.hypot(S.x / (1.6 * b), S.y / b)).toBeLessThan(1);
+    }
+  });
+
+  it('takes links between targets that are not neighbours round the outside, on lanes of their own', () => {
+    expect(hubLayout(tangled).road).toBeUndefined();
+    const layout = hubLayout(calling);
+    const road = layout.road!;
+    expect(road).toBeDefined();
+    const { pos } = layout;
+    const routes = routeBundles(calling, pos, layout.bundles ?? [], layout.targetCurves, road);
+    const roadBends = [...routes.bends].filter(([id]) => id.startsWith('__road:'));
+    expect(roadBends.length).toBeGreaterThan(0);
+    for (const [, p] of roadBends) {
+      // Outside the targets' ellipse, inside the chart's bounds.
+      expect(Math.hypot(p.x / road.a, p.y / road.b)).toBeGreaterThan(1.05);
+      expect(p.x >= layout.bounds.minX && p.x <= layout.bounds.maxX && p.y >= layout.bounds.minY && p.y <= layout.bounds.maxY).toBe(true);
+    }
+    // No road piece runs past another number.
+    for (const p of routes.pieces.filter((q) => q.source.startsWith('__road:') && q.target.startsWith('__road:'))) {
+      const [a, b] = [where(routes, pos, p.source), where(routes, pos, p.target)];
+      for (const n of calling.nodes) expect(distToSegment(pos.get(n.id)!, a, b)).toBeGreaterThan(18);
+    }
+    // Runs that share a stretch of the road are on different lanes.
+    const pairs = calling.edges.filter((e) => e.source.startsWith('T') && e.target.startsWith('T')).map((e) => [e.source, e.target] as [string, string]);
+    const plan = roadPlan(pairs, (id) => pos.get(id)!, road);
+    const runs = [...plan.values()];
+    const covers = (r: { t0: number; dt: number }, th: number) => {
+      const lo = r.dt >= 0 ? r.t0 : r.t0 + r.dt;
+      return ((th - lo) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) <= Math.abs(r.dt);
+    };
+    for (let i = 0; i < runs.length; i++) {
+      for (let j = i + 1; j < runs.length; j++) {
+        const mid = runs[j].t0 + runs[j].dt / 2;
+        if (covers(runs[i], mid)) expect(runs[i].lane).not.toBe(runs[j].lane);
+      }
+    }
+  });
+
   it('bows links between neighbouring targets out, as the layout says', () => {
     const layout = hubLayout(six);
-    const routes = routeBundles(six, layout.pos, layout.bundles!, layout.targetCurves);
+    const routes = routeBundles(six, layout.pos, layout.bundles!, layout.targetCurves, layout.road);
     const t01 = routes.pieces.find((p) => p.source === 'T0' && p.target === 'T1')!;
     expect(t01.curve).toBe(layout.targetCurves!.get('T0\u0000T1'));
     expect(routes.pieces.find((p) => p.source === 'T0' && p.target === 'T3')!.curve).toBeUndefined();

@@ -1,4 +1,4 @@
-import { JOIN_STEP, LANE_STEP, ladderSides, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, type Bundle, type Comb } from './linkRoute';
+import { JOIN_STEP, LANE_STEP, ladderSides, roadPlan, routeOrg, routeTree, SPINE_GAP, SPINE_JOIN, SPINE_LANE, type Bundle, type Comb, type Road } from './linkRoute';
 import type { Network } from './network';
 
 /**
@@ -27,8 +27,10 @@ export interface LinkLayout {
   straightTargetLinks?: boolean;
   /** Curveness of particular links between targets, keyed `source\u0000target` as in the network. */
   targetCurves?: Map<string, number>;
-  /** Contacts whose links to two targets are drawn joined into one trunk to each. */
+  /** Contacts sharing (much the same) targets, whose links are drawn joined into one trunk to each. */
   bundles?: Bundle[];
+  /** The ring road that links between targets which are not neighbours follow round the outside. */
+  road?: Road;
 }
 
 /** The ways a link chart can be laid out (force is computed by the chart itself). */
@@ -146,6 +148,7 @@ export function hubLayout(net: Network): LinkLayout {
   let endOf: (t: string, p: Point, phi: number) => BridgeEnd = (_t, p, phi) => ({ p, fanR: 0, phi });
   let targetCurves: Map<string, number> | undefined;
   let bundles: Bundle[] | undefined;
+  let road: Road | undefined;
   // Size of the targets' ellipse when there are many targets (see below).
   let innerB = 0;
   if (k === 1) {
@@ -194,7 +197,7 @@ export function hubLayout(net: Network): LinkLayout {
       // Room for every ladder at its full spacing (closed up only if the ellipse may grow no more).
       const plan = planLadders(around, bridges, total, ends, LADDER_STEPS.slice(0, 1));
       const spilled = plan.reduce((n, l) => n + l.members.length - l.spots.length, 0);
-      const items = innerItems(leftOver(shared, plan), total);
+      const items = innerItems(leftOver(shared, plan), total, links);
       const taken = plan.flatMap((l) => (l.box ? [l.box] : []));
       return { innerFit: placeInner(items, at, ends, around, links, bb, taken), laddersFit: !spilled, items };
     };
@@ -256,7 +259,7 @@ export function hubLayout(net: Network): LinkLayout {
     placeBridges(plan, pos, sides, (bundles ??= []));
     // The other shared contacts inside: ladders of those sharing the same targets, and single contacts.
     const taken = plan.flatMap((l) => (l.box ? [l.box] : []));
-    placeInner(innerItems(leftOver(shared, plan), total), (t) => hub.get(t)!, ends, around, links, innerB, taken, { pos, labelSide: sides, bundles });
+    placeInner(innerItems(leftOver(shared, plan), total, links), (t) => hub.get(t)!, ends, around, links, innerB, taken, { pos, labelSide: sides, bundles });
     // Neighbours' links bow out round the rim, clear of the bridge between
     // them; links across the chart stay straight.
     const place = new Map(around.map((t, i) => [t, i]));
@@ -270,6 +273,10 @@ export function hubLayout(net: Network): LinkLayout {
       const out = (q.y - p.y) * (p.x + q.x) + (p.x - q.x) * (p.y + q.y);
       (targetCurves ??= new Map()).set(`${e.source}\u0000${e.target}`, out > 0 ? 0.25 : -0.25);
     }
+    // With no fans round the outside (only shared contacts), links between
+    // targets that are not neighbours go round the outside on a ring road,
+    // clear of the middle.
+    if (roadPairs(net, around).length && order.every((t) => !exclusive.get(t)!.length)) road = { a: ELLIPSE * innerB, b: innerB, gap: ROAD_GAP, step: ROAD_STEP };
   }
   else for (const [key, ids] of shared) {
     const ts = key.split('\u0000').filter((t) => hub.has(t));
@@ -306,11 +313,34 @@ export function hubLayout(net: Network): LinkLayout {
   });
 
   separate(pos, targetIds);
-  return { pos, bounds: boundsOf(pos), labelSide, ...(k > 3 ? { straightTargetLinks: true, targetCurves, ...(bundles?.length ? { bundles } : {}) } : {}) };
+  let bounds = boundsOf(pos);
+  if (road) {
+    // Room for every lane of the ring road, and the counts on it.
+    const lanes = Math.max(0, ...[...roadPlan(roadPairs(net, around), (t) => pos.get(t)!, road).values()].map((w) => w.lane));
+    const off = road.gap + lanes * road.step + 0.5 * MIN_GAP;
+    bounds = { minX: Math.min(bounds.minX, -road.a - off), maxX: Math.max(bounds.maxX, road.a + off), minY: Math.min(bounds.minY, -road.b - off), maxY: Math.max(bounds.maxY, road.b + off) };
+  }
+  return { pos, bounds, labelSide, ...(k > 3 ? { straightTargetLinks: true, targetCurves, ...(bundles?.length ? { bundles } : {}), ...(road ? { road } : {}) } : {}) };
 }
 
 /** Width over height of the ellipse many targets sit on (the chart box is wide). */
 const ELLIPSE = 1.6;
+/** The ring road's first lane stands this far outside the targets' ellipse, each further lane this much further out. */
+const ROAD_GAP = 1.5 * MIN_GAP;
+const ROAD_STEP = 0.5 * MIN_GAP;
+
+/** Links between targets that are not neighbours round the ellipse (those the ring road carries). */
+function roadPairs(net: Network, around: string[]): [string, string][] {
+  const place = new Map(around.map((t, i) => [t, i]));
+  const k = around.length;
+  return net.edges
+    .filter((e) => place.has(e.source) && place.has(e.target) && e.source !== e.target)
+    .filter((e) => {
+      const d = Math.abs(place.get(e.source)! - place.get(e.target)!);
+      return Math.min(d, k - d) !== 1;
+    })
+    .map((e) => [e.source, e.target]);
+}
 /** A bridge (with the ends of its spines) starts this far inside the line between its two targets. */
 const BRIDGE_START = 0.7 * MIN_GAP;
 /**
@@ -588,7 +618,7 @@ function placeBridges(plan: LadderPlan[], pos: Map<string, Point>, labelSide: No
       pos.set(id, spots[i]);
       labelSide.set(id, 'bottom');
     });
-    if (placed.length) bundles.push({ targets: [a, b], members: placed });
+    if (placed.length) bundles.push({ targets: [a, b], members: placed, rim: true });
   }
 }
 
@@ -633,19 +663,46 @@ const INNER_CLEAR = 0.15 * MIN_GAP;
 /** The search for room walks out from where a thing would best go in steps this long. */
 const SEARCH_STEP = 0.3 * MIN_GAP;
 
+/** A ladder has at most this many spines (targets). */
+const MAX_LADDER_TARGETS = 4;
+/** Two groups share a ladder when this much of their targets is shared (two or more of them). */
+const MERGE_ALIKE = 0.5;
+
 /**
- * The shared contacts left for the inside of the ellipse, as items: those
- * sharing the same targets (two or more of them) make a ladder, the rest go
- * on their own. Big ladders first, then single contacts, strongest first.
+ * The shared contacts left for the inside of the ellipse, as items. Those
+ * sharing the same targets form a group; groups whose targets are much alike
+ * (say A–B and A–B–C) are merged, most alike first, as long as the ladder
+ * keeps to four targets. A group of two or more contacts makes a ladder (its
+ * contacts by their targets, those with the most first, then strongest
+ * first, so each spine stays short); a contact alike with no one goes on its
+ * own. Big ladders first, then single contacts, strongest first.
  */
-function innerItems(rest: Map<string, string[]>, total: (id: string) => number): InnerItem[] {
-  const items = [...rest]
-    .filter(([, ids]) => ids.length)
-    .flatMap(([key, ids]): InnerItem[] => {
-      const targets = key.split('\u0000');
-      const members = byWeight([...ids], total);
-      return members.length >= 2 ? [{ targets, members }] : members.map((m) => ({ targets, members: [m] }));
-    });
+function innerItems(rest: Map<string, string[]>, total: (id: string) => number, links: Map<string, Map<string, number>>): InnerItem[] {
+  const groups: InnerItem[] = [...rest].filter(([, ids]) => ids.length).map(([key, ids]) => ({ targets: key.split('\u0000'), members: [...ids] }));
+  const alike = (p: InnerItem, q: InnerItem) => {
+    const both = p.targets.filter((t) => q.targets.includes(t)).length;
+    const all = new Set([...p.targets, ...q.targets]).size;
+    return both >= 2 && all <= MAX_LADDER_TARGETS ? both / all : 0;
+  };
+  for (;;) {
+    let [best, bi, bj] = [0, -1, -1];
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const a = alike(groups[i], groups[j]);
+        if (a > best + 1e-9) [best, bi, bj] = [a, i, j];
+      }
+    }
+    if (best < MERGE_ALIKE) break;
+    const [p, q] = [groups[bi], groups[bj]];
+    groups[bi] = { targets: [...new Set([...p.targets, ...q.targets])].sort(), members: [...p.members, ...q.members] };
+    groups.splice(bj, 1);
+  }
+  const key = (m: string) => [...(links.get(m)?.keys() ?? [])].sort().join('\u0000');
+  const reach = (m: string) => links.get(m)?.size ?? 0;
+  const items = groups.flatMap((g): InnerItem[] => {
+    const members = [...g.members].sort((p, q) => reach(q) - reach(p) || key(p).localeCompare(key(q)) || total(q) - total(p) || p.localeCompare(q));
+    return members.length >= 2 ? [{ targets: g.targets, members }] : members.map((m) => ({ targets: g.targets, members: [m] }));
+  });
   const weight = (it: InnerItem) => it.members.reduce((s, m) => s + total(m), 0);
   return items.sort((p, q) => q.members.length - p.members.length || weight(q) - weight(p) || p.members[0].localeCompare(q.members[0]));
 }

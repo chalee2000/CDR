@@ -316,6 +316,50 @@ export function routeOrg(net: Network, pos: Map<string, Point>, combs: Map<strin
 export interface Bundle {
   targets: string[];
   members: string[];
+  /** A bridge between two neighbours, just inside the ellipse (its trunks are short and go straight). */
+  rim?: boolean;
+}
+
+/**
+ * The ring road round the outside of the targets' ellipse (half-axes a, b)
+ * that links between targets which are not neighbours follow: its first lane
+ * `gap` outside the ellipse, each further lane `step` further out.
+ */
+export interface Road {
+  a: number;
+  b: number;
+  gap: number;
+  step: number;
+}
+
+/** A target's angle round an ellipse (half-axes a, b), as the ellipse's own parameter. */
+const roadAngle = (p: Point, road: Road) => Math.atan2(p.y / road.b, p.x / road.a);
+const TAU = 2 * Math.PI;
+const norm = (x: number) => ((x % TAU) + TAU) % TAU;
+
+/**
+ * Each link between two targets on the ring road: it runs the shorter way
+ * round, on the lowest lane free of every other link it would run alongside
+ * (shorter runs nearer the ellipse, so runs nest instead of crossing).
+ */
+export function roadPlan(pairs: [string, string][], at: (id: string) => Point, road: Road): Map<string, { lane: number; t0: number; dt: number }> {
+  const arcs = pairs.map(([p, q]) => {
+    const t0 = roadAngle(at(p), road);
+    let dt = norm(roadAngle(at(q), road) - t0);
+    if (dt > Math.PI) dt -= TAU;
+    return { key: pairKey(p, q), t0, dt, lo: norm(dt >= 0 ? t0 : t0 + dt), len: Math.abs(dt) + 0.08 };
+  });
+  arcs.sort((p, q) => p.len - q.len || p.key.localeCompare(q.key));
+  const lanes: (typeof arcs)[] = [];
+  const out = new Map<string, { lane: number; t0: number; dt: number }>();
+  const within = (x: number, arc: (typeof arcs)[number]) => norm(x - arc.lo) <= arc.len;
+  for (const arc of arcs) {
+    let lane = lanes.findIndex((others) => others.every((o) => !within(arc.lo, o) && !within(o.lo, arc)));
+    if (lane < 0) lane = lanes.push([]) - 1;
+    lanes[lane].push(arc);
+    out.set(arc.key, { lane, t0: arc.t0, dt: arc.dt });
+  }
+  return out;
 }
 
 /** A bundle's spines stand this far either side of its contacts (the nearest one). */
@@ -361,21 +405,35 @@ export function ladderJoins(side: string[], at: (id: string) => Point, top: numb
   });
 }
 
+/** A target's links into the chart part from one cable this far in (as a share of the way to where they go), within these bounds. */
+const SPLIT_SHARE = 0.3;
+const SPLIT_MIN = 75;
+const SPLIT_MAX = 250;
+/** The ring road bends at least this often (radians), so it follows the ellipse. */
+const ROAD_BEND = (6 * Math.PI) / 180;
+
 /**
  * Bundled links (Peacock with many targets), tidy as a ladder: beside each
  * bundle's column of contacts stands a straight up-and-down spine for each of
  * its targets (see ladderSides), level stubs run from a spine to its contacts
  * (each stub carries its link's count and arrows), and one trunk runs from
- * the spine's end nearer the target to the target. Every other link is drawn
- * straight (links between neighbouring targets bowed by `curves`). Worked out
- * from where the numbers are, so it follows numbers moved by hand.
+ * the spine's end nearer the target to the target.
+ *
+ * A target's links into the chart (trunks to ladders inside, links to
+ * contacts on their own) leave it as one cable and part a little way in.
+ * Links between neighbouring targets bow out (`curves`); with a `road`, links
+ * between other targets run round the outside on it; anything else is drawn
+ * straight. Worked out from where the numbers are, so it follows numbers
+ * moved by hand.
  */
-export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bundle[], curves?: Map<string, number>): Routes {
+export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bundle[], curves?: Map<string, number>, road?: Road): Routes {
   const bends = new Map<string, Point>();
   const pieces: RoutePiece[] = [];
   const at = (id: string) => pos.get(id) ?? { x: 0, y: 0 };
   const byKey = new Map(net.edges.map((e) => [pairKey(e.source, e.target), e]));
   const done = new Set<string>();
+  // Trunks, laid once every target's cable is known.
+  const trunks: { t: string; join: string; keys: string[]; rim: boolean }[] = [];
   bundles.forEach((bd, i) => {
     const pts = bd.members.map(at);
     const xs = pts.map((p) => p.x);
@@ -409,16 +467,94 @@ export function routeBundles(net: Network, pos: Map<string, Point>, bundles: Bun
         });
         if (!stops.length) return;
         stops.sort((p, q) => (fromTop ? p.y - q.y : q.y - p.y));
-        pieces.push({ source: t, target: join, edges: stops.map((st) => st.key), kind: 'bus', owner: t });
+        trunks.push({ t, join, keys: stops.map((st) => st.key), rim: !!bd.rim });
         // The spine, stop by stop: each stretch carries the links beyond it.
         stops.forEach((st, j) => pieces.push({ source: j ? stops[j - 1].id : join, target: st.id, edges: stops.slice(j).map((o) => o.key), kind: 'bus', owner: t }));
       });
     }
   });
+
+  const isTarget = new Set(net.nodes.filter((n) => n.isTarget).map((n) => n.id));
+  const targetsOf = new Map<string, number>();
+  for (const e of net.edges) {
+    if (isTarget.has(e.source) === isTarget.has(e.target)) continue;
+    const c = isTarget.has(e.source) ? e.target : e.source;
+    targetsOf.set(c, (targetsOf.get(c) ?? 0) + 1);
+  }
+
+  // Each target's links into the chart: trunks to ladders inside, and links to shared contacts on their own.
+  type Out = { t: string; to: string; point: Point; keys: string[]; e?: NetEdge };
+  const outs = new Map<string, Out[]>();
+  const add = (o: Out) => outs.set(o.t, [...(outs.get(o.t) ?? []), o]);
+  for (const tr of trunks) {
+    if (tr.rim) pieces.push({ source: tr.t, target: tr.join, edges: tr.keys, kind: 'bus', owner: tr.t });
+    else add({ t: tr.t, to: tr.join, point: bends.get(tr.join)!, keys: tr.keys });
+  }
+  const tt: NetEdge[] = [];
   for (const e of net.edges) {
     const key = pairKey(e.source, e.target);
     if (done.has(key)) continue;
-    pieces.push({ source: e.source, target: e.target, edges: [key], kind: 'edge', label: true, arrows: [e.ba > 0, e.ab > 0], curve: curves?.get(`${e.source}\u0000${e.target}`) });
+    const [s, t] = [isTarget.has(e.source), isTarget.has(e.target)];
+    if (s && t) tt.push(e);
+    else if (s !== t && (targetsOf.get(s ? e.target : e.source) ?? 0) >= 2) add({ t: s ? e.source : e.target, to: s ? e.target : e.source, point: at(s ? e.target : e.source), keys: [key], e });
+    else pieces.push({ source: e.source, target: e.target, edges: [key], kind: 'edge', label: true, arrows: [e.ba > 0, e.ab > 0] });
+  }
+  const direct = (o: Out) => {
+    if (!o.e) pieces.push({ source: o.t, target: o.to, edges: o.keys, kind: 'bus', owner: o.t });
+    else pieces.push({ source: o.e.source, target: o.e.target, edges: o.keys, kind: 'edge', label: true, arrows: [o.e.ba > 0, o.e.ab > 0] });
+  };
+  for (const [t, list] of [...outs].sort((p, q) => p[0].localeCompare(q[0]))) {
+    const T = at(t);
+    const mid = list.reduce((acc, o) => ({ x: acc.x + o.point.x / list.length, y: acc.y + o.point.y / list.length }), { x: 0, y: 0 });
+    const d = Math.hypot(mid.x - T.x, mid.y - T.y);
+    const u = d ? { x: (mid.x - T.x) / d, y: (mid.y - T.y) / d } : { x: 0, y: 0 };
+    const far = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, SPLIT_SHARE * d));
+    // Only links going on well past the parting point share the cable.
+    const ahead = (o: Out) => (o.point.x - T.x) * u.x + (o.point.y - T.y) * u.y > far + 20;
+    const shared = d ? list.filter(ahead) : [];
+    if (shared.length < 2) {
+      list.forEach(direct);
+      continue;
+    }
+    const split = `__split:${t}`;
+    bends.set(split, { x: T.x + u.x * far, y: T.y + u.y * far });
+    pieces.push({ source: t, target: split, edges: shared.flatMap((o) => o.keys), kind: 'bus', owner: t });
+    for (const o of list) {
+      if (!shared.includes(o)) direct(o);
+      else if (!o.e) pieces.push({ source: split, target: o.to, edges: o.keys, kind: 'bus', owner: t });
+      else {
+        const tFirst = o.e.source === t;
+        pieces.push({ source: split, target: o.to, edges: o.keys, kind: 'edge', owner: t, label: true, arrows: [(tFirst ? o.e.ba : o.e.ab) > 0, (tFirst ? o.e.ab : o.e.ba) > 0] });
+      }
+    }
+  }
+
+  // Links between targets: neighbours bow out, others take the ring road (or go straight).
+  const curved = (e: NetEdge) => curves?.get(`${e.source}\u0000${e.target}`) ?? curves?.get(`${e.target}\u0000${e.source}`);
+  const plan = road ? roadPlan(tt.filter((e) => curved(e) === undefined).map((e) => [e.source, e.target]), at, road) : new Map();
+  for (const e of tt) {
+    const key = pairKey(e.source, e.target);
+    const way = plan.get(key);
+    if (!road || !way) {
+      pieces.push({ source: e.source, target: e.target, edges: [key], kind: 'edge', label: true, arrows: [e.ba > 0, e.ab > 0], curve: curves?.get(`${e.source}\u0000${e.target}`) });
+      continue;
+    }
+    // From the source out to its lane, round, and in to the target.
+    const off = road.gap + way.lane * road.step;
+    const n = Math.max(1, Math.ceil(Math.abs(way.dt) / ROAD_BEND));
+    const ids: string[] = [e.source];
+    for (let j = 0; j <= n; j++) {
+      const th = way.t0 + (way.dt * j) / n;
+      const id = `__road:${key}:${j}`;
+      bends.set(id, { x: (road.a + off) * Math.cos(th), y: (road.b + off) * Math.sin(th) });
+      ids.push(id);
+    }
+    ids.push(e.target);
+    const middle = Math.floor((ids.length - 1) / 2);
+    for (let j = 0; j + 1 < ids.length; j++) {
+      const arrows: [boolean, boolean] = [j === 0 && e.ba > 0, j === ids.length - 2 && e.ab > 0];
+      pieces.push({ source: ids[j], target: ids[j + 1], edges: [key], kind: 'edge', label: j === middle, arrows });
+    }
   }
   return { bends, pieces };
 }

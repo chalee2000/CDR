@@ -267,8 +267,8 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
 
   // How each link looks, whether drawn straight or in right-angled pieces.
   const tree = input.layoutMode === 'hierarchy' || input.layoutMode === 'organization';
-  // Peacock with many targets: each pair's shared contacts joined into one trunk to each target.
-  const bundled = input.layoutMode === 'hub' && !!layout.bundles?.length;
+  // Peacock with many targets: shared contacts on ladders, joined into cables and trunks, links between targets round the ring road.
+  const bundled = input.layoutMode === 'hub' && (!!layout.bundles?.length || !!layout.road);
   const routed = tree || bundled;
   const styleOf = (e: NetEdge) => {
     const key = edgeKey(e.source, e.target);
@@ -336,7 +336,7 @@ export function buildLinkOption(input: LinkChartInput): EChartsCoreOption {
     // pieces between them (worked out again whenever numbers are moved).
     const at = new Map(net.nodes.map((n) => [n.id, (fixed && input.moved?.get(n.id)) || layout.pos.get(n.id) || { x: 0, y: 0 }]));
     const routes = bundled
-      ? routeBundles(net, at, layout.bundles!, layout.targetCurves)
+      ? routeBundles(net, at, layout.bundles ?? [], layout.targetCurves, layout.road)
       : input.layoutMode === 'organization'
         ? routeOrg(net, at, layout.combs ?? new Map())
         : routeTree(net, at);

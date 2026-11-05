@@ -326,6 +326,47 @@ describe('hub layout with many targets', () => {
     expect(hubLayout(synthetic(3, 10, 2)).bundles).toBeUndefined();
   });
 
+  it('makes room for a ring road round the outside only when the targets have no fans', () => {
+    const shared = synthetic(6, 0, 3);
+    shared.edges.push(edge('T0', 'T3', 5), edge('T1', 'T4', 2));
+    const l = hubLayout(shared);
+    expect(l.road).toBeDefined();
+    expect(l.bounds.maxX).toBeGreaterThan(l.road!.a + l.road!.gap);
+    expect(l.bounds.minY).toBeLessThan(-(l.road!.b + l.road!.gap));
+    const fans = synthetic(6, 4, 3);
+    fans.edges.push(edge('T0', 'T3', 5));
+    expect(hubLayout(fans).road).toBeUndefined();
+    // Neighbours calling each other need no road.
+    const near = synthetic(6, 0, 3);
+    near.edges.push(edge('T0', 'T1', 5));
+    expect(hubLayout(near).road).toBeUndefined();
+  });
+
+  it('puts contacts whose targets are much alike on one ladder, up to four targets', () => {
+    const net = synthetic(8, 4, 3);
+    const add = (id: string, ts: number[]) => {
+      net.nodes.push(node(id));
+      ts.forEach((t, i) => net.edges.push(edge(`T${t}`, id, 3 + i)));
+    };
+    add('P15:0', [1, 5]);
+    add('P15:1', [1, 5]);
+    add('P153:0', [1, 5, 3]);
+    add('Q04:0', [0, 4]);
+    add('Q04:1', [0, 4]);
+    add('Q06:0', [0, 6]);
+    add('Q06:1', [0, 6]);
+    const l = hubLayout(net);
+    const bundleOf = (id: string) => l.bundles!.find((bd) => bd.members.includes(id))!;
+    // A–B and A–B–C share a ladder (the contact of three first), with all three targets.
+    expect(bundleOf('P15:0')).toBe(bundleOf('P153:0'));
+    expect(new Set(bundleOf('P15:0').targets)).toEqual(new Set(['T1', 'T3', 'T5']));
+    expect(bundleOf('P15:0').members[0]).toBe('P153:0');
+    // A–B and A–C do not.
+    expect(bundleOf('Q04:0')).not.toBe(bundleOf('Q06:0'));
+    for (const bd of l.bundles!) expect(bd.targets.length).toBeLessThanOrEqual(4);
+    expect(minDistances(net, l).contact).toBeGreaterThanOrEqual(0.9 * MIN_GAP);
+  });
+
   it('puts contacts shared by targets that are not neighbours, or by three or more, on ladders inside', () => {
     const net = shapedLikeARing(8);
     const l = hubLayout(net);
